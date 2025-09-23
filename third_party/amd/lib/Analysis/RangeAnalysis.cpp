@@ -5,6 +5,7 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Interfaces/Utils/InferIntRangeCommon.h"
+#include "mlir/IR/Iterators.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
 #include "llvm/ADT/TypeSwitch.h"
@@ -248,9 +249,75 @@ std::optional<ConstantIntRanges> maybeGetAssumedRange(Operation *assumption,
   return {};
 }
 
+
+// arith dialect in general does not differentiate signed int and unsigned int;
+// integer value is signed or unsigned depends on how it's used.
+static void collectValueOfSignedInt(Operation *top, DenseSet<Value> &valueSet) {
+  valueSet.clear();
+
+  top->walk<WalkOrder::PreOrder>([&](Operation *op) {
+    llvm::TypeSwitch<Operation*>(op)
+      .Case<triton::AddPtrOp>([&](auto addPtrOp) {
+        valueSet.insert(addPtrOp.getOffset());
+      })
+      .Case<arith::ShRSIOp, arith::CeilDivSIOp, arith::DivSIOp,
+            arith::MaxSIOp, arith::MinSIOp, arith::RemSIOp>([&](auto binop) {
+        valueSet.insert(binop.getResult());
+        valueSet.insert(binop.getOperand(0));
+        valueSet.insert(binop.getOperand(1));
+      })
+      .Case<arith::CmpIOp>([&](auto cmpOp) {
+        switch (cmpOp.getPredicate()) {
+        case arith::CmpIPredicate::sgt:
+        case arith::CmpIPredicate::sge:
+        case arith::CmpIPredicate::sle:
+        case arith::CmpIPredicate::slt:
+          valueSet.insert(cmpOp.getOperand(0));
+          valueSet.insert(cmpOp.getOperand(1));
+          break;
+        case arith::CmpIPredicate::uge:
+        case arith::CmpIPredicate::ugt:
+        case arith::CmpIPredicate::ule:
+        case arith::CmpIPredicate::ult:
+          valueSet.insert(cmpOp.getOperand(0));
+          valueSet.insert(cmpOp.getOperand(1));
+          break;
+        default:
+          break;
+        };
+      });
+  });
+
+  SetVector<Value> worklist;
+  for (auto v : valueSet)
+    worklist.push_back(v);
+
+  while (!worklist) {
+    Value *v = worklist.pop_back();
+    Operation *op = v->getDefiningOp();
+    if (!op) continue;
+
+    llvm::TypeSwitch<Operation*>(op)
+      .Case<arith::AddIOp,arith::SubIOp>([&](auto binop) {
+        if (valueSet.count(binop.getResult())) {
+          valueSet.insert(binop.getOperand(0));
+          valueSet.insert(binop.getOperand(1));
+        };
+      })
+
+  }
+
+#endif
+}
+
 } // namespace
 
 namespace mlir::triton::AMD {
+
+class TritonIntegerRangeAnalysis::TritonIntRangeAnalysisData {
+public:
+  DenseSet<Value> signedIntValues;
+};
 
 bool isEmptyInitializedRange(ConstantIntRanges rv) {
   if (!rv.umin().getBitWidth() || !rv.umax().getBitWidth() ||
@@ -292,6 +359,20 @@ bool cmpIIsStaticallyTrue(const DataFlowSolver &solver, arith::CmpIOp cmpOp) {
         .value_or(false);
   }
   return false;
+}
+
+// Cannot put in the header because file unique ptr of opaque type.
+TritonIntegerRangeAnalysis::TritonIntegerRangeAnalysis(
+      DataFlowSolver &solver,
+      const DenseMap<Value, SetVector<Operation *>> &assumptions)
+      : dataflow::IntegerRangeAnalysis(solver), assumptions(assumptions) {}
+
+TritonIntegerRangeAnalysis::~TritonIntegerRangeAnalysis() = default;
+
+LogicalResult TritonIntegerRangeAnalysis::initialize(Operation *top) {
+  opaqueData = std::make_unique<TritonIntegerRangeAnalysis::TritonIntRangeAnalysisData>();
+  collectValueOfSignedInt(top, opaqueData->signedIntValues);
+  return Base::initialize(top);
 }
 
 std::optional<ConstantIntRanges>
@@ -347,38 +428,129 @@ void TritonIntegerRangeAnalysis::setToEntryState(
   propagateIfChanged(lattice, changed);
 }
 
+void TritonIntegerRangeAnalysis::defaultTransferFunc(
+    Operation *op, Value resultVal,
+    ArrayRef<const dataflow::IntegerValueRangeLattice *> srcLattices,
+    ArrayRef<dataflow::IntegerValueRangeLattice *> resultsLattices,
+    const IntegerValueRange &incomingRange) {
+
+  // step 1: Preparation
+  //  - Get the lattice associated with given particular result value.
+  //  - Make a copy of value-range just inferred, as we need to do some
+  //   change to it before it's joined to the existing lattice.
+  auto result = dyn_cast<OpResult>(resultVal);
+  if (!result)
+    return;
+  assert(llvm::is_contained(op->getResults(), result));
+
+  dataflow::IntegerValueRangeLattice *lattice =
+      resultsLattices[result.getResultNumber()];
+  IntegerValueRange incomingRange_ = incomingRange;
+
+  // step 2: Some range value in MLIR lib is too conservative, update the
+  //  value-range before it is jointed to the lattice.
+  if (auto inferrable = dyn_cast<InferIntRangeInterface>(op)) {
+    auto res = rectifyInfferableRange(inferrable, srcLattices, incomingRange_);
+    if (res.has_value())
+      incomingRange_ = std::move(*res);
+  }
+
+  // step 3: If there is assumed value range, the assumed one take precedence.
+  // TODO: I think this is bit conservative, the better way is:
+  //  final_range = (old_range ∪ incomingRange) ∩ assume_range
+  if (auto maybeRange = maybeGetAssumedRange(resultVal)) {
+    incomingRange_ =
+        IntegerValueRange(incomingRange.getValue().intersection(*maybeRange));
+  }
+
+  // step 4: Update the value range. Note that we are using `join` operation
+  //  which means `union`. Transfer funtion must be monotone! The resolver
+  //  would otherwise fall into infinite loop.
+  ChangeResult changed = lattice->join(incomingRange_);
+  LLVM_DEBUG({
+    if (changed == ChangeResult::Change) {
+      DBGS() << "Inferred range for ";
+      resultVal.printAsOperand(llvm::dbgs(), {});
+      llvm::dbgs() << " to " << incomingRange_ << "\n";
+    }
+  });
+
+  // step 5: Add those ops that depends on this op to the worklist. The resolver
+  // will iterate all items in the worklist until it become empty.
+  propagateIfChanged(lattice, changed);
+}
+
+std::optional<IntegerValueRange>
+TritonIntegerRangeAnalysis::rectifyInfferableRange(
+    InferIntRangeInterface rface,
+    ArrayRef<const dataflow::IntegerValueRangeLattice *> srcLattices,
+    const IntegerValueRange &range) {
+
+  auto op = rface.getOperation();
+
+  // step 1: rule out some operations we cannot handle
+  if (!llvm::isa<arith::AddIOp, arith::MinSIOp, arith::MulIOp, arith::DivSIOp>(
+          op) ||
+      range.isUninitialized()) {
+    return std::nullopt;
+  }
+
+  // Not appliable to those bin-ops yielding unsigned int.
+  if (!opaqueData->signedIntValues.count(op->getResult(0)))
+    return std::nullopt;
+
+  // step 2: Do nothing if the value-range is already a non-negative range.
+  const ConstantIntRanges &resultRange = range.getValue();
+  auto isPos = [](const ConstantIntRanges &range) {
+    // Return true iff in both unsigned and signed representation, the most
+    // siganificant bit is always 0.
+    return range.umax().isNonNegative() && range.smax().isNonNegative() &&
+           range.smin().isNonNegative();
+  };
+
+  if (isPos(resultRange))
+    return std::nullopt;
+
+  // step 3: rule out some messy situations
+  // If the MSB of umin is "1", give up with despair.
+  if (!resultRange.umin().isNonNegative())
+    return std::nullopt;
+
+  // If the value-ranges of operands are somehow missing, we can do nothing
+  if (!srcLattices[0] || !srcLattices[1] ||
+      srcLattices[0]->getValue().isUninitialized() ||
+      srcLattices[1]->getValue().isUninitialized())
+    return std::nullopt;
+
+  auto opndRange0 = srcLattices[0]->getValue().getValue();
+  auto opndRange1 = srcLattices[1]->getValue().getValue();
+
+  // bail out if one of operands' is not non-negative
+  if (!isPos(opndRange0) || !isPos(opndRange1))
+    return std::nullopt;
+
+  APInt umax(resultRange.umax());
+  if (!umax.isNonNegative()) {
+    // Saturate umax to 0x7f...f
+    umax = APInt::getSignedMaxValue(umax.getBitWidth());
+  }
+
+  return ConstantIntRanges::fromUnsigned(resultRange.umin(), umax);
+}
+
 LogicalResult TritonIntegerRangeAnalysis::visitOperation(
     Operation *op,
     ArrayRef<const dataflow::IntegerValueRangeLattice *> operands,
     ArrayRef<dataflow::IntegerValueRangeLattice *> resultsLattices) {
   LDBG("Inferring ranges for " << *op);
+
   // This callback is almost exactly like the callback in
   // IntegerRangeAnalysis::visitOperation except we do not "short-cicruit" the
   // analysis by inferring a maximum range for loop results (instead we
   // perform a check based on visit counts in visitRegionSuccessors).
-  auto joinCallback = [&op, &resultsLattices,
+  auto joinCallback = [&op, &operands, &resultsLattices,
                        this](Value v, const IntegerValueRange &incomingRange) {
-    auto result = dyn_cast<OpResult>(v);
-    if (!result)
-      return;
-    assert(llvm::is_contained(op->getResults(), result));
-
-    dataflow::IntegerValueRangeLattice *lattice =
-        resultsLattices[result.getResultNumber()];
-    IntegerValueRange incomingRange_ = incomingRange;
-    if (auto maybeRange = maybeGetAssumedRange(v)) {
-      incomingRange_ =
-          IntegerValueRange(incomingRange.getValue().intersection(*maybeRange));
-    }
-    ChangeResult changed = lattice->join(incomingRange_);
-    LLVM_DEBUG({
-      if (changed == ChangeResult::Change) {
-        DBGS() << "Inferred range for ";
-        v.printAsOperand(llvm::dbgs(), {});
-        llvm::dbgs() << " to " << incomingRange_ << "\n";
-      }
-    });
-    propagateIfChanged(lattice, changed);
+    this->defaultTransferFunc(op, v, operands, resultsLattices, incomingRange);
   };
 
   // Initialize lattices with assumptions.
@@ -446,6 +618,10 @@ LogicalResult TritonIntegerRangeAnalysis::visitOperation(
     return success();
   }
 
+  // TODO: It looks like inferResultRangesFromOptional does not handle bunch
+  //  of operation very well:
+  //   - arith.shrui, e.g. arith.shrui %arg3, %c5_i32
+  //
   if (auto inferrable = dyn_cast<InferIntRangeInterface>(op)) {
     inferrable.inferResultRangesFromOptional(argIntValueRanges, joinCallback);
     return success();
@@ -609,7 +785,7 @@ struct FoldTrueCmpIOp : OpRewritePattern<arith::CmpIOp> {
   using OpRewritePattern::OpRewritePattern;
 
   FoldTrueCmpIOp(MLIRContext *context, DataFlowSolver *solver)
-      : OpRewritePattern(context), solver(solver) {};
+      : OpRewritePattern(context), solver(solver){};
 
   LogicalResult matchAndRewrite(arith::CmpIOp cmpOp,
                                 PatternRewriter &rewriter) const override {

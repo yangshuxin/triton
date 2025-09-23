@@ -32,14 +32,17 @@ namespace mlir::triton::AMD {
 /// See visitRegionSuccessors.
 struct TritonIntegerRangeAnalysis : dataflow::IntegerRangeAnalysis {
   using dataflow::IntegerRangeAnalysis::IntegerRangeAnalysis;
+  using Base=dataflow::IntegerRangeAnalysis;
   TritonIntegerRangeAnalysis(
       DataFlowSolver &solver,
-      const DenseMap<Value, SetVector<Operation *>> &assumptions)
-      : dataflow::IntegerRangeAnalysis(solver), assumptions(assumptions) {}
+      const DenseMap<Value, SetVector<Operation *>> &assumptions);
+  ~TritonIntegerRangeAnalysis();
 
   void setToEntryState(dataflow::IntegerValueRangeLattice *lattice) override;
 
   void initializeFuncOp(triton::FuncOp funcOp);
+
+  LogicalResult initialize(Operation *top) override;
 
   LogicalResult visitOperation(
       Operation *op,
@@ -125,6 +128,29 @@ struct TritonIntegerRangeAnalysis : dataflow::IntegerRangeAnalysis {
   /// If one uses collectAssumptions below then `assumptions` will look like
   /// %K -> {arith.cmpi slt..., arith.cmpi sge}.
   llvm::DenseMap<Value, SetVector<Operation *>> assumptions;
+
+  /// The defaultTransferFunc is the default transfer function for this dataflow
+  /// problem.
+  /// @param[in] op: the Operation in question
+  /// @param[in] result: a particular value defined by this op. Note that op
+  ///            may define multiple values.
+  /// @param[in] srcLattices: lattices of all source operands
+  /// @param[in] destLattices: lattices all all result values
+  /// @param[in] incomingRange: the value-range inffered for result
+  void defaultTransferFunc(
+      Operation *op, Value result,
+      ArrayRef<const dataflow::IntegerValueRangeLattice *> srcLattices,
+      ArrayRef<dataflow::IntegerValueRangeLattice *> destLattices,
+      const IntegerValueRange &incomingRange);
+
+private:
+  std::optional<IntegerValueRange> rectifyInfferableRange(
+      InferIntRangeInterface interface,
+      ArrayRef<const dataflow::IntegerValueRangeLattice *> srcLattices,
+      const IntegerValueRange &range);
+
+  class TritonIntRangeAnalysisData;
+  std::unique_ptr<TritonIntRangeAnalysisData> opaqueData;
 };
 
 std::optional<SmallVector<std::optional<ConstantIntRanges>>>
