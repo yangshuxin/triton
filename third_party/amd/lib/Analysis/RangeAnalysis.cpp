@@ -253,18 +253,19 @@ std::optional<ConstantIntRanges> maybeGetAssumedRange(Operation *assumption,
 // arith dialect in general does not differentiate signed int and unsigned int;
 // integer value is signed or unsigned depends on how it's used.
 static void collectValueOfSignedInt(Operation *top, DenseSet<Value> &valueSet) {
-  valueSet.clear();
+  SetVector<Value> worklist;
 
+  // Initialize the worklist with some known signed interger values.
   top->walk<WalkOrder::PreOrder>([&](Operation *op) {
     llvm::TypeSwitch<Operation*>(op)
       .Case<triton::AddPtrOp>([&](auto addPtrOp) {
-        valueSet.insert(addPtrOp.getOffset());
+        worklist.insert(addPtrOp.getOffset());
       })
       .Case<arith::ShRSIOp, arith::CeilDivSIOp, arith::DivSIOp,
             arith::MaxSIOp, arith::MinSIOp, arith::RemSIOp>([&](auto binop) {
-        valueSet.insert(binop.getResult());
-        valueSet.insert(binop.getOperand(0));
-        valueSet.insert(binop.getOperand(1));
+        worklist.insert(binop.getResult());
+        worklist.insert(binop.getOperand(0));
+        worklist.insert(binop.getOperand(1));
       })
       .Case<arith::CmpIOp>([&](auto cmpOp) {
         switch (cmpOp.getPredicate()) {
@@ -272,15 +273,15 @@ static void collectValueOfSignedInt(Operation *top, DenseSet<Value> &valueSet) {
         case arith::CmpIPredicate::sge:
         case arith::CmpIPredicate::sle:
         case arith::CmpIPredicate::slt:
-          valueSet.insert(cmpOp.getOperand(0));
-          valueSet.insert(cmpOp.getOperand(1));
+          worklist.insert(cmpOp.getOperand(0));
+          worklist.insert(cmpOp.getOperand(1));
           break;
         case arith::CmpIPredicate::uge:
         case arith::CmpIPredicate::ugt:
         case arith::CmpIPredicate::ule:
         case arith::CmpIPredicate::ult:
-          valueSet.insert(cmpOp.getOperand(0));
-          valueSet.insert(cmpOp.getOperand(1));
+          worklist.insert(cmpOp.getOperand(0));
+          worklist.insert(cmpOp.getOperand(1));
           break;
         default:
           break;
@@ -288,26 +289,47 @@ static void collectValueOfSignedInt(Operation *top, DenseSet<Value> &valueSet) {
       });
   });
 
-  SetVector<Value> worklist;
-  for (auto v : valueSet)
-    worklist.push_back(v);
+  valueSet.clear();
+  auto addToWorklist = [&](Value v) { if (!valueSet.count(v)) worklist.insert(v); };
 
-  while (!worklist) {
-    Value *v = worklist.pop_back();
-    Operation *op = v->getDefiningOp();
-    if (!op) continue;
+  while (!worklist.empty()) {
+    auto v = worklist.back();
+    worklist.pop_back();
+    Operation *op = v.getDefiningOp();
 
-    llvm::TypeSwitch<Operation*>(op)
-      .Case<arith::AddIOp,arith::SubIOp>([&](auto binop) {
-        if (valueSet.count(binop.getResult())) {
-          valueSet.insert(binop.getOperand(0));
-          valueSet.insert(binop.getOperand(1));
-        };
-      })
+    if (op) {
+      llvm::TypeSwitch<Operation*>(op)
+        .Case<arith::AddIOp,arith::SubIOp>([&](auto binop) {
+          if (valueSet.count(binop.getResult())) {
+            addToWorklist(binop.getOperand(0));
+            addToWorklist(binop.getOperand(1));
+          };
+        });
+    }
 
+    SmallVector<Value> results;
+    if (op)
+      results = op->getResults();
+    else
+      results.push_back(v);
+
+    for (auto result : results) {
+      if (valueSet.count(result))
+        continue;
+
+      valueSet.insert(result);
+
+      for (mlir::OpOperand &use : result.getUses()) {
+        llvm::TypeSwitch<Operation*>(use.getOwner())
+          .Case<triton::SplatOp>([&](auto splatOp) {
+            addToWorklist(splatOp.getResult());
+          })
+          .Case<arith::AddIOp,arith::MulIOp>([&](auto binOp) {
+            addToWorklist(binOp.getResult());
+          });
+      }
+    }
   }
-
-#endif
 }
 
 } // namespace
