@@ -141,39 +141,6 @@ bool verifyNonNegativeExpr(
           // Returns a tensor representing histogram: histograms only contain
           // buckets of non-negative values.
           .Case<triton::HistogramOp>([&](auto) { return true; })
-          .Case<triton::MakeRangeOp>([&](auto makeRangeOp) {
-            // See the warning in TritonOps.td: getStart/getEnd return unsigned,
-            // so we need to look through get*Attr.
-            return makeRangeOp.getStartAttr().getInt() >= 0 &&
-                   makeRangeOp.getEndAttr().getInt() >= 0;
-          })
-          .Case<arith::ConstantIntOp>(
-              [&](auto constIntOp) { return constIntOp.value() >= 0; })
-          .Case<arith::ConstantOp>([&](arith::ConstantOp constOp) {
-            Value val = constOp.getResult();
-            DenseIntElementsAttr constVal;
-            if (matchPattern(val, m_Constant(&constVal)) && constVal.isSplat())
-              return constVal.getSplatValue<APInt>().isNonNegative();
-            return false;
-          })
-          .Case<triton::GetNumProgramsOp, triton::GetProgramIdOp>([&](auto) {
-            // These are defined as signless, but are actually unsigned
-            return true;
-          })
-          .Case<arith::MaxSIOp>([&](auto maxOp) {
-            // max(a,b) >= 0 iff a>=0 || b>=0
-            return verifyNonNegativeExpr(maxOp.getLhs(), assumptions, solver) ||
-                   verifyNonNegativeExpr(maxOp.getRhs(), assumptions, solver);
-          })
-          .Case<arith::RemSIOp>([&](auto remsiOp) {
-            // a % b >= 0 iff a>=0
-            return verifyNonNegativeExpr(remsiOp.getLhs(), assumptions, solver);
-          })
-          .Case<arith::TruncIOp, arith::ExtSIOp>([&](Operation *unaryOp) {
-            // a = OP b >= 0 iff b >= 0
-            return verifyNonNegativeExpr(unaryOp->getOperand(0), assumptions,
-                                         solver);
-          })
           // Casting from arbitrary data does *not* guarantee the offset is in
           // range (even if pointer, or the data is non-negative when
           // interpreted as the src's type).
@@ -187,15 +154,6 @@ bool verifyNonNegativeExpr(
               //       for whether or not it's used as an argument to one of
               //       these OPs.
               [&](auto uOp) { return true; })
-          .Case<arith::AddIOp, arith::MinSIOp, arith::MulIOp, arith::DivSIOp>(
-              // Generally speaking, a OP b >= 0  iff  a >= 0 && b >= 0 when
-              // OP != sub
-              [&](Operation *binOp) {
-                return verifyNonNegativeExpr(binOp->getOperand(0), assumptions,
-                                             solver) &&
-                       verifyNonNegativeExpr(binOp->getOperand(1), assumptions,
-                                             solver);
-              })
           // TODO: more scf
           .Case<scf::IfOp>([&](auto ifOp) {
             auto results = ifOp.getResults();
@@ -217,10 +175,6 @@ bool verifyNonNegativeExpr(
             // If a user annotates tl.assume(a >= b) then we know a - b >= 0
             return verifyNonSmallerByAssumption(op.getLhs(), assumptions,
                                                 op.getRhs());
-          })
-          .Case<triton::amdgpu::ExtractSliceOp>([&](auto op) {
-            return verifyNonNegativeExpr(op->getOperand(0), assumptions,
-                                         solver);
           })
           .Default([&](Operation *) {
             // Conservatively assume that the expression is negative
