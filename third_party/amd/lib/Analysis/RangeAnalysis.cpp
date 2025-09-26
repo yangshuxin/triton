@@ -6,6 +6,7 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Interfaces/Utils/InferIntRangeCommon.h"
 #include "mlir/IR/Iterators.h"
+#include "third_party/amd/include/Dialect/TritonAMDGPU/IR/Dialect.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
 #include "llvm/ADT/TypeSwitch.h"
@@ -267,6 +268,9 @@ static void collectValueOfSignedInt(Operation *top, DenseSet<Value> &valueSet) {
         worklist.insert(binop.getOperand(0));
         worklist.insert(binop.getOperand(1));
       })
+      .Case<arith::ExtSIOp>([&](auto sExt) {
+        worklist.insert(sExt.getResult());
+      })
       .Case<arith::CmpIOp>([&](auto cmpOp) {
         switch (cmpOp.getPredicate()) {
         case arith::CmpIPredicate::sgt:
@@ -297,13 +301,16 @@ static void collectValueOfSignedInt(Operation *top, DenseSet<Value> &valueSet) {
     worklist.pop_back();
     Operation *op = v.getDefiningOp();
 
+    // If the result of this op is signed int, then its source operands are
+    // singed int.
     if (op) {
       llvm::TypeSwitch<Operation*>(op)
-        .Case<arith::AddIOp,arith::SubIOp>([&](auto binop) {
-          if (valueSet.count(binop.getResult())) {
-            addToWorklist(binop.getOperand(0));
-            addToWorklist(binop.getOperand(1));
-          };
+        .Case<arith::AddIOp, arith::SubIOp>([&](auto binOp) {
+          addToWorklist(binOp.getOperand(0));
+          addToWorklist(binOp.getOperand(1));
+        })
+        .Case<triton::SplatOp, arith::TruncIOp>([&](auto unary) {
+          addToWorklist(unary.getOperand());
         });
     }
 
@@ -321,8 +328,9 @@ static void collectValueOfSignedInt(Operation *top, DenseSet<Value> &valueSet) {
 
       for (mlir::OpOperand &use : result.getUses()) {
         llvm::TypeSwitch<Operation*>(use.getOwner())
-          .Case<triton::SplatOp>([&](auto splatOp) {
-            addToWorklist(splatOp.getResult());
+          .Case<triton::SplatOp, arith::TruncIOp,
+                triton::amdgpu::ExtractSliceOp>([&](auto op) {
+            addToWorklist(op.getResult());
           })
           .Case<arith::AddIOp,arith::MulIOp>([&](auto binOp) {
             addToWorklist(binOp.getResult());
@@ -330,6 +338,14 @@ static void collectValueOfSignedInt(Operation *top, DenseSet<Value> &valueSet) {
       }
     }
   }
+
+  LLVM_DEBUG(
+    DBGS() << "Values considered as signed int begin\n";
+    for (auto v : valueSet) {
+      DBGS() << " - " << v << "\n";
+    }
+    DBGS() << "Values considered as signed int end\n";
+  );
 }
 
 } // namespace
@@ -510,8 +526,18 @@ TritonIntegerRangeAnalysis::rectifyInfferableRange(
 
   auto op = rface.getOperation();
 
+  auto isPos = [](const ConstantIntRanges &range) {
+    // Return true iff in both unsigned and signed representation, the most
+    // siganificant bit is always 0.
+    return range.umax().isNonNegative() && range.smax().isNonNegative() &&
+           range.smin().isNonNegative();
+  };
+
+  // step 1: special handling of unary operations
+
   // step 1: rule out some operations we cannot handle
-  if (!llvm::isa<arith::AddIOp, arith::MinSIOp, arith::MulIOp, arith::DivSIOp>(
+  if (!llvm::isa<arith::AddIOp, arith::MinSIOp, arith::MulIOp, arith::DivSIOp,
+       arith::TruncIOp>(
           op) ||
       range.isUninitialized()) {
     return std::nullopt;
@@ -523,18 +549,26 @@ TritonIntegerRangeAnalysis::rectifyInfferableRange(
 
   // step 2: Do nothing if the value-range is already a non-negative range.
   const ConstantIntRanges &resultRange = range.getValue();
-  auto isPos = [](const ConstantIntRanges &range) {
-    // Return true iff in both unsigned and signed representation, the most
-    // siganificant bit is always 0.
-    return range.umax().isNonNegative() && range.smax().isNonNegative() &&
-           range.smin().isNonNegative();
-  };
 
   if (isPos(resultRange))
     return std::nullopt;
 
-  // step 3: rule out some messy situations
-  // If the MSB of umin is "1", give up with despair.
+  // step 3: special handling of arith::TrincIOp
+  if (llvm::isa<arith::TruncIOp>(op)) {
+    if (!srcLattices[0] || srcLattices[0]->getValue().isUninitialized())
+      return std::nullopt;
+
+    const ConstantIntRanges srcRange = srcLattices[0]->getValue().getValue();
+    if (!isPos(srcRange))
+      return std::nullopt;
+
+    // assume NSW
+    APInt umax = APInt::getSignedMaxValue(resultRange.umax().getBitWidth());
+    return ConstantIntRanges::fromUnsigned(resultRange.umin(), umax);
+  }
+
+  // step 4: rule out some messy situations
+  // If the MSB of umin is "1", bailout
   if (!resultRange.umin().isNonNegative())
     return std::nullopt;
 
@@ -611,6 +645,11 @@ LogicalResult TritonIntegerRangeAnalysis::visitOperation(
       operands, [](const dataflow::IntegerValueRangeLattice *lattice) {
         return lattice->getValue();
       });
+
+  if (auto sliceOp = dyn_cast<triton::amdgpu::ExtractSliceOp>(op)) {
+    joinCallback(sliceOp->getResult(0), argIntValueRanges[0]);
+    return success();
+  }
 
   // Ops with actually changing/variable input/output ranges.
   if (llvm::isa<TransOp, SplitOp, BroadcastOp, ReshapeOp, gpu::ConvertLayoutOp,
