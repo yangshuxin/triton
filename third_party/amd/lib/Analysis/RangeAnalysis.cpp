@@ -583,6 +583,7 @@ void TritonIntegerRangeAnalysis::defaultTransferFunc(
   propagateIfChanged(lattice, changed);
 }
 
+
 std::optional<IntegerValueRange>
 TritonIntegerRangeAnalysis::rectifyInfferableRange(
     InferIntRangeInterface rface,
