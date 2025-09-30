@@ -108,9 +108,11 @@ tt::FuncOp getEnclosingFunction(Value v) {
     if (auto blk = v.getParentBlock())
       definingOp = blk->getParentOp();
 
-  if (definingOp)
-    funcOp = definingOp->getParentOfType<tt::FuncOp>();
-
+  if (definingOp) {
+    funcOp = dyn_cast_or_null<tt::FuncOp>(definingOp);
+    if (!funcOp)
+      funcOp = definingOp->getParentOfType<tt::FuncOp>();
+  }
   assert(funcOp && "No enclosing tt::FuncOp");
   return funcOp;
 }
@@ -547,6 +549,7 @@ void TritonIntegerRangeAnalysis::defaultTransferFunc(
   propagateIfChanged(lattice, changed);
 }
 
+
 std::optional<IntegerValueRange>
 TritonIntegerRangeAnalysis::rectifyInfferableRange(
     InferIntRangeInterface rface,
@@ -555,22 +558,19 @@ TritonIntegerRangeAnalysis::rectifyInfferableRange(
 
   auto op = rface.getOperation();
 
+  // step 1: rule out some operations we cannot handle
+  if (!llvm::isa<arith::AddIOp, arith::SubIOp, arith::MinSIOp, arith::MulIOp,
+                 arith::DivSIOp, arith::TruncIOp>(op) ||
+      range.isUninitialized()) {
+    return std::nullopt;
+  }
+
   auto isPos = [](const ConstantIntRanges &range) {
     // Return true iff in both unsigned and signed representation, the most
     // siganificant bit is always 0.
     return range.umax().isNonNegative() && range.smax().isNonNegative() &&
            range.smin().isNonNegative();
   };
-
-  // step 1: special handling of unary operations
-
-  // step 1: rule out some operations we cannot handle
-  if (!llvm::isa<arith::AddIOp, arith::MinSIOp, arith::MulIOp, arith::DivSIOp,
-       arith::TruncIOp>(
-          op) ||
-      range.isUninitialized()) {
-    return std::nullopt;
-  }
 
   // Not appliable to those bin-ops yielding unsigned int.
   if (!opaqueData->signedIntValues.count(op->getResult(0)))
@@ -582,7 +582,7 @@ TritonIntegerRangeAnalysis::rectifyInfferableRange(
   if (isPos(resultRange))
     return std::nullopt;
 
-  // step 3: special handling of arith::TrincIOp
+  // step 3: special handling of arith::TruncIOp
   if (llvm::isa<arith::TruncIOp>(op)) {
     if (!srcLattices[0] || srcLattices[0]->getValue().isUninitialized())
       return std::nullopt;

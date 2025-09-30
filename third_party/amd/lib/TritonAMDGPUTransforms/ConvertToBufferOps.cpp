@@ -52,47 +52,6 @@ bool isSplatOneConstTensor(const Value v) {
   return false;
 }
 
-bool verifyNonSmallerByAssumption(
-    Value expr, const DenseMap<Value, SetVector<Operation *>> &assumptions,
-    const std::function<bool(Value)> &matchesOther) {
-  if (!assumptions.contains(expr))
-    return false;
-  for (Operation *assume : assumptions.at(expr)) {
-    auto cmpOp = llvm::dyn_cast<arith::CmpIOp>(assume);
-    if (!cmpOp)
-      continue;
-    switch (cmpOp.getPredicate()) {
-    case arith::CmpIPredicate::eq:
-    case arith::CmpIPredicate::sge:
-    case arith::CmpIPredicate::sgt: {
-      if (cmpOp.getLhs() == expr && matchesOther(cmpOp.getRhs())) {
-        LDBG("  " << expr << " non-neg by assumption " << cmpOp);
-        return true;
-      }
-      break;
-    }
-    case arith::CmpIPredicate::sle:
-    case arith::CmpIPredicate::slt: {
-      if (cmpOp.getRhs() == expr && matchesOther(cmpOp.getLhs())) {
-        LDBG("  " << expr << " non-neg by assumption " << cmpOp);
-        return true;
-      }
-      break;
-    }
-    default:
-      break;
-    }
-  }
-  return false;
-}
-
-bool verifyNonSmallerByAssumption(
-    Value expr, const DenseMap<Value, SetVector<Operation *>> &assumptions,
-    Value other) {
-  return verifyNonSmallerByAssumption(
-      expr, assumptions, [&](auto otherAssum) { return otherAssum == other; });
-}
-
 bool verifyNonNegativeExpr(
     Value expr, const DenseMap<Value, SetVector<Operation *>> &assumptions,
     std::shared_ptr<DataFlowSolver> solver) {
@@ -119,69 +78,7 @@ bool verifyNonNegativeExpr(
     return false;
   }
 
-  bool nonNegative =
-      llvm::TypeSwitch<Operation *, bool>(expr.getDefiningOp())
-          // Various unary triton ops that don't change the sign of the operand
-          .Case<triton::TransOp, triton::SplitOp, triton::BroadcastOp,
-                triton::ExpandDimsOp, triton::SplatOp, triton::ReshapeOp,
-                triton::gpu::ConvertLayoutOp>([&](auto unaryOp) {
-            return verifyNonNegativeExpr(unaryOp.getOperand(), assumptions,
-                                         solver);
-          })
-          .Case<triton::GatherOp>([&](auto gatherOp) {
-            return verifyNonNegativeExpr(gatherOp.getSrc(), assumptions,
-                                         solver);
-          })
-          // Joining two non-negative tensors is still non-negative
-          .Case<triton::JoinOp, triton::CatOp>([&](auto joinOp) {
-            return verifyNonNegativeExpr(joinOp.getLhs(), assumptions,
-                                         solver) &&
-                   verifyNonNegativeExpr(joinOp.getRhs(), assumptions, solver);
-          })
-          // Returns a tensor representing histogram: histograms only contain
-          // buckets of non-negative values.
-          .Case<triton::HistogramOp>([&](auto) { return true; })
-          // Casting from arbitrary data does *not* guarantee the offset is in
-          // range (even if pointer, or the data is non-negative when
-          // interpreted as the src's type).
-          .Case<triton::PtrToIntOp, triton::BitcastOp>(
-              [&](auto) { return false; })
-          .Case<arith::CeilDivUIOp, arith::DivUIOp, arith::ExtUIOp,
-                arith::FPToUIOp, arith::MaxUIOp, arith::MinUIOp, arith::RemUIOp,
-                arith::ShRUIOp>(
-              // These OPs also return unsigned values.
-              // TODO: We can also sniff whether a Value is unsigned by looking
-              //       for whether or not it's used as an argument to one of
-              //       these OPs.
-              [&](auto uOp) { return true; })
-          // TODO: more scf
-          .Case<scf::IfOp>([&](auto ifOp) {
-            auto results = ifOp.getResults();
-            auto it = std::find(results.begin(), results.end(), expr);
-            assert(it != results.end() && "expr should be the result of ifOp");
-            auto resultIdx = it - results.begin();
-
-            // If we're here then we must have both then/else regions
-            // (each with 1 block) and each region must terminate with an
-            // `scf.yield` expression.
-            auto thenYield = cast<scf::YieldOp>(ifOp.thenYield());
-            auto elseYield = cast<scf::YieldOp>(ifOp.elseYield());
-            return verifyNonNegativeExpr(thenYield->getOperand(resultIdx),
-                                         assumptions, solver) &&
-                   verifyNonNegativeExpr(elseYield->getOperand(resultIdx),
-                                         assumptions, solver);
-          })
-          .Case<arith::SubIOp>([&](auto op) {
-            // If a user annotates tl.assume(a >= b) then we know a - b >= 0
-            return verifyNonSmallerByAssumption(op.getLhs(), assumptions,
-                                                op.getRhs());
-          })
-          .Default([&](Operation *) {
-            // Conservatively assume that the expression is negative
-            LDBG("  Unhandled op, cannot assume non-negative");
-            return false;
-          });
-  return nonNegative;
+  return false;
 }
 
 // Quick analysis on the Triton IR to decide if we can safely use
