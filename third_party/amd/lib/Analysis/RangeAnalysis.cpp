@@ -24,68 +24,6 @@ using namespace mlir;
 
 namespace tt = mlir::triton;
 
-std::optional<int64_t>
-triton::AMD::TritonIntegerRangeAnalysis::maybeGetTripCount(
-    LoopLikeOpInterface loop) {
-  std::optional<OpFoldResult> lowerBound = loop.getSingleLowerBound();
-  std::optional<OpFoldResult> upperBound = loop.getSingleUpperBound();
-  std::optional<OpFoldResult> step = loop.getSingleStep();
-  std::optional<Value> iv = loop.getSingleInductionVar();
-  if (!iv)
-    return {};
-
-  unsigned int width = ConstantIntRanges::getStorageBitwidth(iv->getType());
-
-  auto getLoopRangeInfo = [&](std::optional<OpFoldResult> loopBound,
-                              Block *block,
-                              std::optional<bool> getUpper = std::nullopt,
-                              std::optional<APInt> defaultVal = std::nullopt) {
-    if (loopBound.has_value()) {
-      if (auto attr = dyn_cast<Attribute>(*loopBound)) {
-        if (auto bound = dyn_cast_or_null<IntegerAttr>(attr))
-          return bound.getValue();
-      } else if (auto value = llvm::dyn_cast_if_present<Value>(*loopBound)) {
-        const dataflow::IntegerValueRangeLattice *lattice =
-            getLatticeElementFor(getProgramPointBefore(block), value);
-        if (lattice != nullptr && !lattice->getValue().isUninitialized())
-          return getUpper ? lattice->getValue().getValue().smax()
-                          : lattice->getValue().getValue().smin();
-      }
-    }
-    if (defaultVal)
-      return *defaultVal;
-    return getUpper ? APInt::getSignedMaxValue(width)
-                    : APInt::getSignedMinValue(width);
-  };
-
-  Block *block = iv->getParentBlock();
-  APInt min = getLoopRangeInfo(lowerBound, block,
-                               /*getUpper=*/false);
-  APInt max = getLoopRangeInfo(upperBound, block,
-                               /*getUpper=*/true);
-  // We can assume step is 1 if no range information as that gives us the upper
-  // bound of the number of iterations.
-  APInt stepValDefault = {width, 1, /*isSigned=*/true};
-  APInt stepVal =
-      getLoopRangeInfo(step, block, /*getUpper=*/{}, stepValDefault);
-
-  if (stepVal.isNegative())
-    std::swap(min, max);
-  // This is necessary to catch a case like this:
-  //  # range = [0 1024]
-  //  K = ....
-  //  # range = [1, 64]
-  //  k = ...
-  //  # range = [0, 16] -> stepVal = range.smin() = 0
-  //  step = ceildiv(K, k)
-  if (stepVal.isZero())
-    stepVal = stepValDefault;
-  if (max.sge(min))
-    return llvm::divideCeilSigned(max.getSExtValue() - min.getSExtValue(),
-                                  stepVal.getSExtValue());
-  return {};
-}
-
 namespace {
 
 constexpr int64_t kDefaultMaxTripCount = 1024;
@@ -117,7 +55,7 @@ tt::FuncOp getEnclosingFunction(Value v) {
   return funcOp;
 }
 
-Block *getEntryBlock(tt::FuncOp func) {
+Block *getFuncEntryBlock(tt::FuncOp func) {
   return &func.getRegion().front();
 }
 
@@ -187,7 +125,37 @@ void inferResultRangesMaxNonNegSigned(Operation *op,
   }
 }
 
-std::optional<ConstantIntRanges> maybeGetAssumedRange(Operation *assumption,
+// Given an assumption operaiton, try to derive the value range of the value
+// <anchor>'s value range at the somewhere in the block "useBlock".
+// Note that
+//  - The value "anchor" is defined or referenced in the "useBlock"
+//  - The location of the reference of "anchor" in the "useBlock" does not
+//    matter because the IR is in SSA form, the value-range of a quantity
+//    does not change through out the entire block.
+//  - The assumption should be ignored if it does not dominate the "useBlock".
+//
+// Consider following cases:
+//
+// case 1: both s2 and s3 are applicable to s1 because they dominate s1
+//   s2: assume y > 5
+//   ...
+//   if cond
+//     s3: assume z < 3
+//     s1: x = y + z
+//
+// case 2: s2 is applicable to s1 even if s2 stay after s1.
+//   blk:
+//     s1: x = y + z
+//     s2: assume y > 5
+//
+// case 3: s2 is not applicable to s1 because the block of else-caluse does not
+//   domoinate the then-clause block.
+//   if cond
+//      s1: x = y + z
+//   else
+//      s2: assume y > 5
+//
+std::optional<ConstantIntRanges> maybeGetAssumedRangeHelper(Operation *assumption,
    Value anchor, Block *useBlock, DominanceInfo *domInfo) {
 
   arith::CmpIOp cmpOp = llvm::dyn_cast<arith::CmpIOp>(assumption);
@@ -276,6 +244,24 @@ std::optional<ConstantIntRanges> maybeGetAssumedRange(Operation *assumption,
   return {};
 }
 
+std::optional<ConstantIntRanges> maybeGetAssumedRange(
+  const SetVector<Operation *> &allAssumptions, Value anchor,
+  Block *useBlock, DominanceInfo *domInfo) {
+
+  std::optional<ConstantIntRanges> result;
+  for (auto assumption : allAssumptions) {
+    auto tmpResult = maybeGetAssumedRangeHelper(assumption, anchor, useBlock, domInfo);
+    if (!tmpResult.has_value())
+      continue;
+
+    if (result.has_value())
+      result = (*result).intersection(*tmpResult);
+    else
+      result = *tmpResult;
+  }
+
+  return result;
+}
 
 // arith dialect in general does not differentiate signed int and unsigned int;
 // integer value is signed or unsigned depends on how it's used.
@@ -378,6 +364,68 @@ static void collectValueOfSignedInt(Operation *top, DenseSet<Value> &valueSet) {
 
 namespace mlir::triton::AMD {
 
+std::optional<int64_t>
+TritonIntegerRangeAnalysis::maybeGetTripCount(LoopLikeOpInterface loop) {
+  std::optional<OpFoldResult> lowerBound = loop.getSingleLowerBound();
+  std::optional<OpFoldResult> upperBound = loop.getSingleUpperBound();
+  std::optional<OpFoldResult> step = loop.getSingleStep();
+  std::optional<Value> iv = loop.getSingleInductionVar();
+  if (!iv)
+    return {};
+
+  unsigned int width = ConstantIntRanges::getStorageBitwidth(iv->getType());
+
+  auto getLoopRangeInfo = [&](std::optional<OpFoldResult> loopBound,
+                              Block *block,
+                              std::optional<bool> getUpper = std::nullopt,
+                              std::optional<APInt> defaultVal = std::nullopt) {
+    if (loopBound.has_value()) {
+      if (auto attr = dyn_cast<Attribute>(*loopBound)) {
+        if (auto bound = dyn_cast_or_null<IntegerAttr>(attr))
+          return bound.getValue();
+      } else if (auto value = llvm::dyn_cast_if_present<Value>(*loopBound)) {
+        const dataflow::IntegerValueRangeLattice *lattice =
+            getLatticeElementFor(getProgramPointBefore(block), value);
+        if (lattice != nullptr && !lattice->getValue().isUninitialized())
+          return getUpper ? lattice->getValue().getValue().smax()
+                          : lattice->getValue().getValue().smin();
+      }
+    }
+    if (defaultVal)
+      return *defaultVal;
+    return getUpper ? APInt::getSignedMaxValue(width)
+                    : APInt::getSignedMinValue(width);
+  };
+
+  Block *block = iv->getParentBlock();
+  APInt min = getLoopRangeInfo(lowerBound, block,
+                               /*getUpper=*/false);
+  APInt max = getLoopRangeInfo(upperBound, block,
+                               /*getUpper=*/true);
+  // We can assume step is 1 if no range information as that gives us the upper
+  // bound of the number of iterations.
+  APInt stepValDefault = {width, 1, /*isSigned=*/true};
+  APInt stepVal =
+      getLoopRangeInfo(step, block, /*getUpper=*/{}, stepValDefault);
+
+  if (stepVal.isNegative())
+    std::swap(min, max);
+  // This is necessary to catch a case like this:
+  //  # range = [0 1024]
+  //  K = ....
+  //  # range = [1, 64]
+  //  k = ...
+  //  # range = [0, 16] -> stepVal = range.smin() = 0
+  //  step = ceildiv(K, k)
+  if (stepVal.isZero())
+    stepVal = stepValDefault;
+  if (max.sge(min))
+    return llvm::divideCeilSigned(max.getSExtValue() - min.getSExtValue(),
+                                  stepVal.getSExtValue());
+  return {};
+}
+
+
 class TritonIntegerRangeAnalysis::TritonIntRangeAnalysisData {
 public:
   DenseSet<Value> signedIntValues;
@@ -444,24 +492,11 @@ LogicalResult TritonIntegerRangeAnalysis::initialize(Operation *top) {
 std::optional<ConstantIntRanges>
 TritonIntegerRangeAnalysis::maybeGetAssumedRange(Value anchor, Block *useBlock)
   const {
-  auto matchingAssumptions = this->assumptions.lookup(anchor);
+  const auto &matchingAssumptions = this->assumptions.lookup(anchor);
   if (matchingAssumptions.empty())
     return {};
 
-  unsigned bitWidth = ConstantIntRanges::getStorageBitwidth(anchor.getType());
-  assert(bitWidth > 0 && "expected non-zero bitwidth");
-  ConstantIntRanges constIntRange = ConstantIntRanges::maxRange(bitWidth);
-  if (llvm::isa_and_nonnull<GetProgramIdOp>(anchor.getDefiningOp())) {
-    constIntRange = ConstantIntRanges::range(
-        APInt::getZero(bitWidth),
-        APInt(bitWidth, kDefaultMaxPrograms - 1, true), true);
-  }
-
-  for (auto assumption : matchingAssumptions) {
-    if (auto constIntRange_ = ::maybeGetAssumedRange(assumption, anchor, useBlock, domInfo))
-      constIntRange = constIntRange.intersection(*constIntRange_);
-  }
-  return constIntRange;
+  return ::maybeGetAssumedRange(matchingAssumptions, anchor, useBlock, domInfo);
 }
 
 int64_t
@@ -482,7 +517,7 @@ void TritonIntegerRangeAnalysis::setToEntryState(
       !llvm::isa<IntegerType>(getElementTypeOrSelf(anchor)))
     return;
 
-  Block *entryBlock = getEntryBlock(getEnclosingFunction(anchor));
+  Block *entryBlock = getFuncEntryBlock(getEnclosingFunction(anchor));
   IntegerValueRange range = IntegerValueRange::getMaxRange(anchor);
   if (auto maybeRange = maybeGetAssumedRange(anchor, entryBlock))
     range = *maybeRange;
@@ -722,18 +757,19 @@ LogicalResult TritonIntegerRangeAnalysis::visitOperation(
 }
 
 void TritonIntegerRangeAnalysis::initializeFuncOp(tt::FuncOp op) {
-  Block *entryBlock = getEntryBlock(op);
+  Block *entryBlock = getFuncEntryBlock(op);
   for (BlockArgument argument : op.getArguments()) {
-    if (this->assumptions.lookup(argument).empty())
+    if (!this->assumptions.count(argument))
       continue;
 
     dataflow::IntegerValueRangeLattice *argLattice =
       getLatticeElement(argument);
-    auto anchor = argLattice->getAnchor();
-    IntegerValueRange range = IntegerValueRange::getMaxRange(anchor);
-    if (anchor.getParentBlock() == entryBlock) {
-      if (auto maybeRange = maybeGetAssumedRange(anchor, entryBlock))
-        range = *maybeRange;
+
+    if (auto maybeRange = maybeGetAssumedRange(argument, entryBlock)) {
+      auto range = *maybeRange;
+      (void)argLattice->meet(range);
+    } else {
+      auto range = IntegerValueRange::getMaxRange(argument);
       (void)argLattice->join(range);
     }
   }
