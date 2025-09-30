@@ -100,6 +100,25 @@ void getEnclosingLoops(Operation &op, SmallVector<LoopLikeOpInterface> &ops) {
   }
 }
 
+tt::FuncOp getEnclosingFunction(Value v) {
+  tt::FuncOp funcOp = nullptr;
+
+  auto definingOp = v.getDefiningOp();
+  if (!definingOp)
+    if (auto blk = v.getParentBlock())
+      definingOp = blk->getParentOp();
+
+  if (definingOp)
+    funcOp = definingOp->getParentOfType<tt::FuncOp>();
+
+  assert(funcOp && "No enclosing tt::FuncOp");
+  return funcOp;
+}
+
+Block *getEntryBlock(tt::FuncOp func) {
+  return &func.getRegion().front();
+}
+
 void inferResultRangesPID(Operation *op, uint64_t max,
                           SetIntRangeFn setResultRange) {
   assert(op->getNumResults() == 1 && "expected op to have one result");
@@ -167,12 +186,17 @@ void inferResultRangesMaxNonNegSigned(Operation *op,
 }
 
 std::optional<ConstantIntRanges> maybeGetAssumedRange(Operation *assumption,
-                                                      Value anchor) {
+   Value anchor, Block *useBlock, DominanceInfo *domInfo) {
+
   arith::CmpIOp cmpOp = llvm::dyn_cast<arith::CmpIOp>(assumption);
   if (!cmpOp) {
     emitRemark(assumption->getLoc(), "unsupported assumption operation");
     return {};
   }
+
+  Block *anchorBlock = anchor.getParentBlock();
+  if (!anchorBlock || !domInfo->dominates(anchorBlock, useBlock))
+    return {};
 
   bool isSigned = true;
   switch (cmpOp.getPredicate()) {
@@ -402,8 +426,10 @@ bool cmpIIsStaticallyTrue(const DataFlowSolver &solver, arith::CmpIOp cmpOp) {
 // Cannot put in the header because file unique ptr of opaque type.
 TritonIntegerRangeAnalysis::TritonIntegerRangeAnalysis(
       DataFlowSolver &solver,
-      const DenseMap<Value, SetVector<Operation *>> &assumptions)
-      : dataflow::IntegerRangeAnalysis(solver), assumptions(assumptions) {}
+      const DenseMap<Value, SetVector<Operation *>> &assumptions,
+      DominanceInfo *dominanceInfo)
+      : dataflow::IntegerRangeAnalysis(solver), assumptions(assumptions),
+        domInfo(dominanceInfo) {}
 
 TritonIntegerRangeAnalysis::~TritonIntegerRangeAnalysis() = default;
 
@@ -414,7 +440,8 @@ LogicalResult TritonIntegerRangeAnalysis::initialize(Operation *top) {
 }
 
 std::optional<ConstantIntRanges>
-TritonIntegerRangeAnalysis::maybeGetAssumedRange(Value anchor) const {
+TritonIntegerRangeAnalysis::maybeGetAssumedRange(Value anchor, Block *useBlock)
+  const {
   auto matchingAssumptions = this->assumptions.lookup(anchor);
   if (matchingAssumptions.empty())
     return {};
@@ -429,7 +456,7 @@ TritonIntegerRangeAnalysis::maybeGetAssumedRange(Value anchor) const {
   }
 
   for (auto assumption : matchingAssumptions) {
-    if (auto constIntRange_ = ::maybeGetAssumedRange(assumption, anchor))
+    if (auto constIntRange_ = ::maybeGetAssumedRange(assumption, anchor, useBlock, domInfo))
       constIntRange = constIntRange.intersection(*constIntRange_);
   }
   return constIntRange;
@@ -452,8 +479,10 @@ void TritonIntegerRangeAnalysis::setToEntryState(
   if (!llvm::isa<IndexType>(getElementTypeOrSelf(anchor)) &&
       !llvm::isa<IntegerType>(getElementTypeOrSelf(anchor)))
     return;
+
+  Block *entryBlock = getEntryBlock(getEnclosingFunction(anchor));
   IntegerValueRange range = IntegerValueRange::getMaxRange(anchor);
-  if (auto maybeRange = maybeGetAssumedRange(anchor))
+  if (auto maybeRange = maybeGetAssumedRange(anchor, entryBlock))
     range = *maybeRange;
   auto changed = lattice->join(range);
   LLVM_DEBUG({
@@ -496,7 +525,7 @@ void TritonIntegerRangeAnalysis::defaultTransferFunc(
   // step 3: If there is assumed value range, the assumed one take precedence.
   // TODO: I think this is bit conservative, the better way is:
   //  final_range = (old_range ∪ incomingRange) ∩ assume_range
-  if (auto maybeRange = maybeGetAssumedRange(resultVal)) {
+  if (auto maybeRange = maybeGetAssumedRange(resultVal, op->getBlock())) {
     incomingRange_ =
         IntegerValueRange(incomingRange.getValue().intersection(*maybeRange));
   }
@@ -693,13 +722,17 @@ LogicalResult TritonIntegerRangeAnalysis::visitOperation(
 }
 
 void TritonIntegerRangeAnalysis::initializeFuncOp(tt::FuncOp op) {
+  Block *entryBlock = getEntryBlock(op);
   for (BlockArgument argument : op.getArguments()) {
-    if (!this->assumptions.lookup(argument).empty()) {
-      dataflow::IntegerValueRangeLattice *argLattice =
-          getLatticeElement(argument);
-      auto anchor = argLattice->getAnchor();
-      IntegerValueRange range = IntegerValueRange::getMaxRange(anchor);
-      if (auto maybeRange = maybeGetAssumedRange(anchor))
+    if (this->assumptions.lookup(argument).empty())
+      continue;
+
+    dataflow::IntegerValueRangeLattice *argLattice =
+      getLatticeElement(argument);
+    auto anchor = argLattice->getAnchor();
+    IntegerValueRange range = IntegerValueRange::getMaxRange(anchor);
+    if (anchor.getParentBlock() == entryBlock) {
+      if (auto maybeRange = maybeGetAssumedRange(anchor, entryBlock))
         range = *maybeRange;
       (void)argLattice->join(range);
     }

@@ -5,6 +5,7 @@
 #include "mlir/Analysis/DataFlow/SparseAnalysis.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
+#include "mlir/IR/Dominance.h"
 
 namespace mlir::triton {
 class FuncOp;
@@ -35,7 +36,8 @@ struct TritonIntegerRangeAnalysis : dataflow::IntegerRangeAnalysis {
   using Base=dataflow::IntegerRangeAnalysis;
   TritonIntegerRangeAnalysis(
       DataFlowSolver &solver,
-      const DenseMap<Value, SetVector<Operation *>> &assumptions);
+      const DenseMap<Value, SetVector<Operation *>> &assumptions,
+      DominanceInfo *dominanceInfo);
   ~TritonIntegerRangeAnalysis();
 
   void setToEntryState(dataflow::IntegerValueRangeLattice *lattice) override;
@@ -98,7 +100,8 @@ struct TritonIntegerRangeAnalysis : dataflow::IntegerRangeAnalysis {
   ///   llvm.intr.assume %assumesltlhs : i1
   /// for %K, will produce a final range
   ///   [0, 2147483647] ∩ [-2147483648, 128] = [0, 128]
-  std::optional<ConstantIntRanges> maybeGetAssumedRange(Value anchor) const;
+  std::optional<ConstantIntRanges> maybeGetAssumedRange(Value anchor,
+                                                        Block *useBlock) const;
 
   int64_t getTotalLoopTripCount(LoopLikeOpInterface loop);
 
@@ -151,6 +154,7 @@ private:
 
   class TritonIntRangeAnalysisData;
   std::unique_ptr<TritonIntRangeAnalysisData> opaqueData;
+  DominanceInfo *domInfo = nullptr;
 };
 
 std::optional<SmallVector<std::optional<ConstantIntRanges>>>
