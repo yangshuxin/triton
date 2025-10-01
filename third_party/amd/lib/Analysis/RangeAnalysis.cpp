@@ -4,8 +4,8 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
-#include "mlir/Interfaces/Utils/InferIntRangeCommon.h"
 #include "mlir/IR/Iterators.h"
+#include "mlir/Interfaces/Utils/InferIntRangeCommon.h"
 #include "third_party/amd/include/Dialect/TritonAMDGPU/IR/Dialect.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
@@ -55,9 +55,7 @@ tt::FuncOp getEnclosingFunction(Value v) {
   return funcOp;
 }
 
-Block *getFuncEntryBlock(tt::FuncOp func) {
-  return &func.getRegion().front();
-}
+Block *getFuncEntryBlock(tt::FuncOp func) { return &func.getRegion().front(); }
 
 void inferResultRangesPID(Operation *op, uint64_t max,
                           SetIntRangeFn setResultRange) {
@@ -155,8 +153,9 @@ void inferResultRangesMaxNonNegSigned(Operation *op,
 //   else
 //      s2: assume y > 5
 //
-std::optional<ConstantIntRanges> maybeGetAssumedRangeHelper(Operation *assumption,
-   Value anchor, Block *useBlock, DominanceInfo *domInfo) {
+std::optional<ConstantIntRanges>
+maybeGetAssumedRangeHelper(Operation *assumption, Value anchor, Block *useBlock,
+                           DominanceInfo *domInfo) {
 
   arith::CmpIOp cmpOp = llvm::dyn_cast<arith::CmpIOp>(assumption);
   if (!cmpOp) {
@@ -244,13 +243,14 @@ std::optional<ConstantIntRanges> maybeGetAssumedRangeHelper(Operation *assumptio
   return {};
 }
 
-std::optional<ConstantIntRanges> maybeGetAssumedRange(
-  const SetVector<Operation *> &allAssumptions, Value anchor,
-  Block *useBlock, DominanceInfo *domInfo) {
+std::optional<ConstantIntRanges>
+maybeGetAssumedRange(const SetVector<Operation *> &allAssumptions, Value anchor,
+                     Block *useBlock, DominanceInfo *domInfo) {
 
   std::optional<ConstantIntRanges> result;
   for (auto assumption : allAssumptions) {
-    auto tmpResult = maybeGetAssumedRangeHelper(assumption, anchor, useBlock, domInfo);
+    auto tmpResult =
+        maybeGetAssumedRangeHelper(assumption, anchor, useBlock, domInfo);
     if (!tmpResult.has_value())
       continue;
 
@@ -270,43 +270,44 @@ static void collectValueOfSignedInt(Operation *top, DenseSet<Value> &valueSet) {
 
   // Initialize the worklist with some known signed interger values.
   top->walk<WalkOrder::PreOrder>([&](Operation *op) {
-    llvm::TypeSwitch<Operation*>(op)
-      .Case<triton::AddPtrOp>([&](auto addPtrOp) {
-        worklist.insert(addPtrOp.getOffset());
-      })
-      .Case<arith::ShRSIOp, arith::CeilDivSIOp, arith::DivSIOp,
-            arith::MaxSIOp, arith::MinSIOp, arith::RemSIOp>([&](auto binop) {
-        worklist.insert(binop.getResult());
-        worklist.insert(binop.getOperand(0));
-        worklist.insert(binop.getOperand(1));
-      })
-      .Case<arith::ExtSIOp>([&](auto sExt) {
-        worklist.insert(sExt.getResult());
-      })
-      .Case<arith::CmpIOp>([&](auto cmpOp) {
-        switch (cmpOp.getPredicate()) {
-        case arith::CmpIPredicate::sgt:
-        case arith::CmpIPredicate::sge:
-        case arith::CmpIPredicate::sle:
-        case arith::CmpIPredicate::slt:
-          worklist.insert(cmpOp.getOperand(0));
-          worklist.insert(cmpOp.getOperand(1));
-          break;
-        case arith::CmpIPredicate::uge:
-        case arith::CmpIPredicate::ugt:
-        case arith::CmpIPredicate::ule:
-        case arith::CmpIPredicate::ult:
-          worklist.insert(cmpOp.getOperand(0));
-          worklist.insert(cmpOp.getOperand(1));
-          break;
-        default:
-          break;
-        };
-      });
+    llvm::TypeSwitch<Operation *>(op)
+        .Case<triton::AddPtrOp>(
+            [&](auto addPtrOp) { worklist.insert(addPtrOp.getOffset()); })
+        .Case<arith::ShRSIOp, arith::CeilDivSIOp, arith::DivSIOp,
+              arith::MaxSIOp, arith::MinSIOp, arith::RemSIOp>([&](auto binop) {
+          worklist.insert(binop.getResult());
+          worklist.insert(binop.getOperand(0));
+          worklist.insert(binop.getOperand(1));
+        })
+        .Case<arith::ExtSIOp>(
+            [&](auto sExt) { worklist.insert(sExt.getResult()); })
+        .Case<arith::CmpIOp>([&](auto cmpOp) {
+          switch (cmpOp.getPredicate()) {
+          case arith::CmpIPredicate::sgt:
+          case arith::CmpIPredicate::sge:
+          case arith::CmpIPredicate::sle:
+          case arith::CmpIPredicate::slt:
+            worklist.insert(cmpOp.getOperand(0));
+            worklist.insert(cmpOp.getOperand(1));
+            break;
+          case arith::CmpIPredicate::uge:
+          case arith::CmpIPredicate::ugt:
+          case arith::CmpIPredicate::ule:
+          case arith::CmpIPredicate::ult:
+            worklist.insert(cmpOp.getOperand(0));
+            worklist.insert(cmpOp.getOperand(1));
+            break;
+          default:
+            break;
+          };
+        });
   });
 
   valueSet.clear();
-  auto addToWorklist = [&](Value v) { if (!valueSet.count(v)) worklist.insert(v); };
+  auto addToWorklist = [&](Value v) {
+    if (!valueSet.count(v))
+      worklist.insert(v);
+  };
 
   while (!worklist.empty()) {
     auto v = worklist.back();
@@ -316,14 +317,13 @@ static void collectValueOfSignedInt(Operation *top, DenseSet<Value> &valueSet) {
     // If the result of this op is signed int, then its source operands are
     // singed int.
     if (op) {
-      llvm::TypeSwitch<Operation*>(op)
-        .Case<arith::AddIOp, arith::SubIOp>([&](auto binOp) {
-          addToWorklist(binOp.getOperand(0));
-          addToWorklist(binOp.getOperand(1));
-        })
-        .Case<triton::SplatOp, arith::TruncIOp>([&](auto unary) {
-          addToWorklist(unary.getOperand());
-        });
+      llvm::TypeSwitch<Operation *>(op)
+          .Case<arith::AddIOp, arith::SubIOp>([&](auto binOp) {
+            addToWorklist(binOp.getOperand(0));
+            addToWorklist(binOp.getOperand(1));
+          })
+          .Case<triton::SplatOp, arith::TruncIOp>(
+              [&](auto unary) { addToWorklist(unary.getOperand()); });
     }
 
     SmallVector<Value> results;
@@ -339,25 +339,21 @@ static void collectValueOfSignedInt(Operation *top, DenseSet<Value> &valueSet) {
       valueSet.insert(result);
 
       for (mlir::OpOperand &use : result.getUses()) {
-        llvm::TypeSwitch<Operation*>(use.getOwner())
-          .Case<triton::SplatOp, arith::TruncIOp,
-                triton::amdgpu::ExtractSliceOp>([&](auto op) {
-            addToWorklist(op.getResult());
-          })
-          .Case<arith::AddIOp,arith::MulIOp>([&](auto binOp) {
-            addToWorklist(binOp.getResult());
-          });
+        llvm::TypeSwitch<Operation *>(use.getOwner())
+            .Case<triton::SplatOp, arith::TruncIOp,
+                  triton::amdgpu::ExtractSliceOp>(
+                [&](auto op) { addToWorklist(op.getResult()); })
+            .Case<arith::AddIOp, arith::MulIOp>(
+                [&](auto binOp) { addToWorklist(binOp.getResult()); });
       }
     }
   }
 
   LLVM_DEBUG(
-    DBGS() << "Values considered as signed int begin\n";
-    for (auto v : valueSet) {
-      DBGS() << " - " << v << "\n";
-    }
-    DBGS() << "Values considered as signed int end\n";
-  );
+      DBGS() << "Values considered as signed int begin\n"; for (auto v
+                                                                : valueSet) {
+        DBGS() << " - " << v << "\n";
+      } DBGS() << "Values considered as signed int end\n";);
 }
 
 } // namespace
@@ -425,7 +421,6 @@ TritonIntegerRangeAnalysis::maybeGetTripCount(LoopLikeOpInterface loop) {
   return {};
 }
 
-
 class TritonIntegerRangeAnalysis::TritonIntRangeAnalysisData {
 public:
   DenseSet<Value> signedIntValues;
@@ -475,23 +470,24 @@ bool cmpIIsStaticallyTrue(const DataFlowSolver &solver, arith::CmpIOp cmpOp) {
 
 // Cannot put in the header because file unique ptr of opaque type.
 TritonIntegerRangeAnalysis::TritonIntegerRangeAnalysis(
-      DataFlowSolver &solver,
-      const DenseMap<Value, SetVector<Operation *>> &assumptions,
-      DominanceInfo *dominanceInfo)
-      : dataflow::IntegerRangeAnalysis(solver), assumptions(assumptions),
-        domInfo(dominanceInfo) {}
+    DataFlowSolver &solver,
+    const DenseMap<Value, SetVector<Operation *>> &assumptions,
+    DominanceInfo *dominanceInfo)
+    : dataflow::IntegerRangeAnalysis(solver), assumptions(assumptions),
+      domInfo(dominanceInfo) {}
 
 TritonIntegerRangeAnalysis::~TritonIntegerRangeAnalysis() = default;
 
 LogicalResult TritonIntegerRangeAnalysis::initialize(Operation *top) {
-  opaqueData = std::make_unique<TritonIntegerRangeAnalysis::TritonIntRangeAnalysisData>();
+  opaqueData = std::make_unique<
+      TritonIntegerRangeAnalysis::TritonIntRangeAnalysisData>();
   collectValueOfSignedInt(top, opaqueData->signedIntValues);
   return Base::initialize(top);
 }
 
 std::optional<ConstantIntRanges>
-TritonIntegerRangeAnalysis::maybeGetAssumedRange(Value anchor, Block *useBlock)
-  const {
+TritonIntegerRangeAnalysis::maybeGetAssumedRange(Value anchor,
+                                                 Block *useBlock) const {
   const auto &matchingAssumptions = this->assumptions.lookup(anchor);
   if (matchingAssumptions.empty())
     return {};
@@ -583,7 +579,6 @@ void TritonIntegerRangeAnalysis::defaultTransferFunc(
   // will iterate all items in the worklist until it become empty.
   propagateIfChanged(lattice, changed);
 }
-
 
 std::optional<IntegerValueRange>
 TritonIntegerRangeAnalysis::rectifyInfferableRange(
@@ -763,15 +758,17 @@ void TritonIntegerRangeAnalysis::initializeFuncOp(tt::FuncOp op) {
       continue;
 
     dataflow::IntegerValueRangeLattice *argLattice =
-      getLatticeElement(argument);
+        getLatticeElement(argument);
 
-    if (auto maybeRange = maybeGetAssumedRange(argument, entryBlock)) {
-      auto range = *maybeRange;
-      (void)argLattice->meet(range);
-    } else {
-      auto range = IntegerValueRange::getMaxRange(argument);
-      (void)argLattice->join(range);
-    }
+    IntegerValueRange range = IntegerValueRange::getMaxRange(argument);
+    if (auto maybeRange = maybeGetAssumedRange(argument, entryBlock))
+      range = *maybeRange;
+
+    // The lattice must in "bottom" state, The join() operation is to set the
+    // state to the given "range".
+    assert(argLattice->getValue().isUninitialized() &&
+           "lattice must be in bottom state");
+    (void)argLattice->join(range);
   }
 }
 
