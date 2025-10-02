@@ -421,6 +421,9 @@ TritonIntegerRangeAnalysis::maybeGetTripCount(LoopLikeOpInterface loop) {
   return {};
 }
 
+// We need to create some data to track internal state. There is no need to
+// expose the details of these data in to header file. Hence we create opqaue
+// data in the cpp file.
 class TritonIntegerRangeAnalysis::TritonIntRangeAnalysisData {
 public:
   DenseSet<Value> signedIntValues;
@@ -667,7 +670,7 @@ void TritonIntegerRangeAnalysis::visitYieldHelper(Operation *op, Value value) {
 
     if (auto ifOp = dyn_cast<scf::IfOp>(parentOp)) {
       // Get the corresponding scf.if result and its lattice
-      mlir::OpResult res = op->getResult(idx);
+      mlir::OpResult res = parentOp->getResult(idx);
       dataflow::IntegerValueRangeLattice *resLattice = getLatticeElement(res);
       auto changed = resLattice->join(*srcLattice);
       propagateIfChanged(resLattice, changed);
