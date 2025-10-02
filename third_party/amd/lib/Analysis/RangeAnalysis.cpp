@@ -653,7 +653,51 @@ TritonIntegerRangeAnalysis::rectifyInfferableRange(
   return ConstantIntRanges::fromUnsigned(resultRange.umin(), umax);
 }
 
+void TritonIntegerRangeAnalysis::visitYieldHelper(Operation *op, Value value) {
+  auto yieldOp = dyn_cast<scf::YieldOp>(op);
+
+  dataflow::IntegerValueRangeLattice *srcLattice = getLatticeElement(value);
+
+  for (auto iter : llvm::enumerate(yieldOp->getOperands())) {
+    if (iter.value() != value)
+      continue;
+
+    size_t idx = iter.index();
+    Operation *parentOp = yieldOp->getParentOp();
+
+    if (auto ifOp = dyn_cast<scf::IfOp>(parentOp)) {
+      // Get the corresponding scf.if result and its lattice
+      mlir::OpResult res = op->getResult(idx);
+      dataflow::IntegerValueRangeLattice *resLattice = getLatticeElement(res);
+      auto changed = resLattice->join(*srcLattice);
+      propagateIfChanged(resLattice, changed);
+      continue;
+    }
+  }
+}
+
 LogicalResult TritonIntegerRangeAnalysis::visitOperation(
+    Operation *op,
+    ArrayRef<const dataflow::IntegerValueRangeLattice *> operands,
+    ArrayRef<dataflow::IntegerValueRangeLattice *> resultsLattices) {
+
+  LogicalResult visitResult = visitOperationHelper(op, operands, resultsLattices);
+
+  for (int resIdx = 0, resEnd = op->getNumResults(); resIdx < resEnd;
+       ++resIdx) {
+    mlir::OpResult res = op->getResult(resIdx);
+
+    for (mlir::OpOperand &use : res.getUses()) {
+      mlir::Operation *depOp = use.getOwner();
+      if (auto yield = dyn_cast<scf::YieldOp>(depOp))
+        visitYieldHelper(yield, res);
+    }
+  }
+
+  return visitResult;
+}
+
+LogicalResult TritonIntegerRangeAnalysis::visitOperationHelper(
     Operation *op,
     ArrayRef<const dataflow::IntegerValueRangeLattice *> operands,
     ArrayRef<dataflow::IntegerValueRangeLattice *> resultsLattices) {
@@ -739,7 +783,7 @@ LogicalResult TritonIntegerRangeAnalysis::visitOperation(
   }
 
   // TODO: It looks like inferResultRangesFromOptional does not handle bunch
-  //  of operation very well:
+  //  of operations very well:
   //   - arith.shrui, e.g. arith.shrui %arg3, %c5_i32
   //
   if (auto inferrable = dyn_cast<InferIntRangeInterface>(op)) {

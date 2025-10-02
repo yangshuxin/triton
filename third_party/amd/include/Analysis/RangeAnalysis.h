@@ -147,6 +147,12 @@ struct TritonIntegerRangeAnalysis : dataflow::IntegerRangeAnalysis {
       const IntegerValueRange &incomingRange);
 
 private:
+  void visitYieldHelper(Operation *yieldOp, Value value);
+  LogicalResult visitOperationHelper(
+      Operation *op,
+      ArrayRef<const dataflow::IntegerValueRangeLattice *> operands,
+      ArrayRef<dataflow::IntegerValueRangeLattice *> resultsLattices);
+
   std::optional<IntegerValueRange> rectifyInfferableRange(
       InferIntRangeInterface interface,
       ArrayRef<const dataflow::IntegerValueRangeLattice *> srcLattices,
