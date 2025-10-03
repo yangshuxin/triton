@@ -260,6 +260,20 @@ maybeGetAssumedRange(const SetVector<Operation *> &allAssumptions, Value anchor,
       result = *tmpResult;
   }
 
+  if (result) {
+    const auto &val = *result;
+    if (val.smin().isNonNegative()) {
+      // Consider 0 < x && x < 1024.
+      // When processing x > 0, the value range of x is
+      //  vr1={umin=0, umax=0xf...f, smin=0, smax=0x7...f}
+      // When processing x < 1024, the value range of x is:
+      //  vr2={umin=0, umax=0xf...f, smin=..., smax=1024}
+      // and
+      //  vr1 ∩ vr2 = {umin=0, umax=0xf...f, smin=0, smax=1024}
+      // note that the umax=0xf...f is annoying, need to change to 1024.
+      return ConstantIntRanges::range(val.smin(), val.smax(), true);
+    }
+  }
   return result;
 }
 

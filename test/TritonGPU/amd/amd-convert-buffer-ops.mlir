@@ -18,13 +18,15 @@ module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 1 : i32} {
     %8 = tt.addptr %7, %4 : tensor<256x!tt.ptr<f32>, #blocked0>, tensor<256xi32, #blocked0>
     // COMMON: buffer_load %arg0[%[[offset]]]
     %9 = tt.load %6 : tensor<256x!tt.ptr<f32>, #blocked0>
-    // COMMON: buffer_load %arg1[%[[offset]]]
+    // Note: large-tensor with elemIdx=pid*256 + arange(0, 256), elemIdx ∈ [0, smax]
+    // COMMON-NOT: buffer_load
     %10 = tt.load %8 : tensor<256x!tt.ptr<f32>, #blocked0>
     // COMMON: %[[data:.*]] = arith.addf
     %11 = arith.addf %9, %10 : tensor<256xf32, #blocked0>
     %12 = tt.splat %arg2 : !tt.ptr<f32> -> tensor<256x!tt.ptr<f32>, #blocked0>
     %13 = tt.addptr %12, %4 : tensor<256x!tt.ptr<f32>, #blocked0>, tensor<256xi32, #blocked0>
-    // COMMON: buffer_store %[[data]], %arg2[%[[offset]]]
+    // Note: large-tensor with elemIdx ∈ [0, smax]
+    // COMMON-NOT: buffer_store
     tt.store %13, %11 : tensor<256x!tt.ptr<f32>, #blocked0>
     tt.return
   }
@@ -113,13 +115,39 @@ module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 4 : i32} {
     %5 = tt.addptr %arg0, %1 : !tt.ptr<f32>, i32
     %8 = tt.splat %5 : !tt.ptr<f32> -> tensor<1024x!tt.ptr<f32>, #blocked>
     %9 = tt.addptr %8, %4 : tensor<1024x!tt.ptr<f32>, #blocked>, tensor<1024xi32, #blocked>
-    // COMMON: buffer_load %[[scalar_ptr]][%[[offset]]]
+    // COMMON-NOT: buffer_load %[[scalar_ptr]][%[[offset]]]
     %10 = tt.load %9 : tensor<1024x!tt.ptr<f32>, #blocked>
     tt.return %10 : tensor<1024xf32, #blocked>
   }
 }
 
 // -----
+
+#blocked = #ttg.blocked<{sizePerThread = [4], threadsPerWarp = [32], warpsPerCTA = [4], order = [0]}>
+module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 4 : i32} {
+  // COMMON-LABEL: assume_positive_offset_range
+  tt.func @assume_positive_offset(%arg0: !tt.ptr<f32> {tt.divisibility = 16 : i32}) ->  tensor<1024xf32, #blocked>{
+    %c1024_i32 = arith.constant 1024 : i32
+    %c128_i32 = arith.constant 128 : i32
+    %c0_i32 = arith.constant 0 : i32
+    %0 = tt.get_program_id x : i32
+    %1 = arith.muli %0, %c1024_i32 : i32
+    %sub = arith.subi %1, %c128_i32 : i32
+    %cmp = arith.cmpi sgt, %sub, %c0_i32 : i32
+    llvm.intr.assume %cmp : i1
+    %2 = tt.splat %sub : i32 -> tensor<1024xi32, #blocked>
+    %3 = tt.make_range {end = 1024 : i32, start = 0 : i32} : tensor<1024xi32, #blocked>
+    // COMMON: %[[offset:.*]] = arith.addi
+    %4 = arith.addi %2, %3 : tensor<1024xi32, #blocked>
+    // COMMON: %[[scalar_ptr:.*]] = tt.addptr %arg0
+    %5 = tt.addptr %arg0, %1 : !tt.ptr<f32>, i32
+    %8 = tt.splat %5 : !tt.ptr<f32> -> tensor<1024x!tt.ptr<f32>, #blocked>
+    %9 = tt.addptr %8, %4 : tensor<1024x!tt.ptr<f32>, #blocked>, tensor<1024xi32, #blocked>
+    // COMMON: buffer_load %[[scalar_ptr]][%[[offset]]]
+    %10 = tt.load %9 : tensor<1024x!tt.ptr<f32>, #blocked>
+    tt.return %10 : tensor<1024xf32, #blocked>
+  }
+}
 
 #blocked = #ttg.blocked<{sizePerThread = [4], threadsPerWarp = [32], warpsPerCTA = [4], order = [0]}>
 module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 4 : i32}  {
