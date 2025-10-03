@@ -53,33 +53,40 @@ bool isSplatOneConstTensor(const Value v) {
   return false;
 }
 
-bool verifyNonNegativeExpr(
-    Value expr, const DenseMap<Value, SetVector<Operation *>> &assumptions,
-    std::shared_ptr<DataFlowSolver> solver) {
-  LDBG("Determing if non-negative: " << expr);
+bool isByteOffsetSmallerThan2GB(triton::AddPtrOp addPtrOp, std::shared_ptr<DataFlowSolver> solver) {
+  Value elemIdx = addPtrOp.getOffset();
+  LDBG("Determing element index value range: " << elemIdx);
 
-  auto nonNegativePred = [&solver](Value v) -> bool {
-    if (const auto *r =
-            solver->lookupState<dataflow::IntegerValueRangeLattice>(v)) {
-      if (r->getValue().isUninitialized())
-        return false;
-      if (AMD::isEmptyInitializedRange(r->getValue().getValue()))
-        return false;
-    }
-    return succeeded(dataflow::staticallyNonNegative(*solver, v));
+  // step 1: get the value range of the element index
+  const auto *lattice = solver->lookupState<dataflow::IntegerValueRangeLattice>(elemIdx);
+  const mlir::IntegerValueRange &vr = lattice->getValue();
+  if (vr.isUninitialized() || AMD::isEmptyInitializedRange(vr.getValue())) {
+    LDBG("cannot get meaningful value range");
+    return false;
   };
 
-  if (nonNegativePred(expr))
-    return true;
+  const auto &smin = vr.getValue().smin();
+  const auto &smax = vr.getValue().smax();
 
-  // Recurse if the operation is defined
-  Operation *op = expr.getDefiningOp();
-  if (!op) {
-    LDBG("  No defining op, assuming possibly negative");
+  LDBG("Element idx range: " << smin << " : " << smax);
+  if (smin.isNegative() || smax.isNegative())
     return false;
-  }
 
-  return false;
+  // step 2: get element size
+  Type elemTy = getElementTypeOrSelf(addPtrOp.getType());
+  while (auto ptrTy = dyn_cast<triton::PointerType>(elemTy))
+    elemTy = ptrTy.getPointeeType();
+
+  // step 3: check of byte-offset is within 2G
+  int64_t elemBitSz = elemTy.getIntOrFloatBitWidth();
+  int64_t elemMaxIdx = smax.getSExtValue();
+  int64_t byteOfst = (elemBitSz * elemMaxIdx + elemBitSz + 7)/8;
+  int64_t szLimit2GB = (1L << 31) - 1;
+
+  LDBG("element bit sz:" << elemBitSz << ", max byte offset:" << byteOfst <<
+       ((szLimit2GB > byteOfst) ? ", out or range" : ",in range"));
+
+  return byteOfst <= szLimit2GB ;
 }
 
 bool isFuncArgWith32bitPtrRange(mlir::Value value) {
@@ -145,7 +152,8 @@ bool canUseBufferOps(Value ptr,
     LDBG("base-ptr as tt.pointer_range=32 attribute");
     return true;
   }
-  return verifyNonNegativeExpr(offset, assumptions, std::move(solver));
+
+  return isByteOffsetSmallerThan2GB(addPtrOp, std::move(solver));
 }
 
 // Extract stride of the blocked offset of LD/ST ops.
