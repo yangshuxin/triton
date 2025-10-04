@@ -440,11 +440,12 @@ module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 4 : i32} {
     %17 = arith.addi %15, %16 : tensor<8xi32, #blocked>
     %18 = tt.splat %arg0 : !tt.ptr<bf16> -> tensor<8x!tt.ptr<bf16>, #blocked>
     %19 = tt.addptr %18, %17 : tensor<8x!tt.ptr<bf16>, #blocked>, tensor<8xi32, #blocked>
-    // COMMON: %[[loaded:.*]] = amdgpu.buffer_load %arg0[%{{.*}}]
+    // Note: above operations can only prove elmtIdx >= 0 not don't reveal its upper bound.
+    // COMMON-NOT: amdgpu.buffer_load
     %20 = tt.load %19 : tensor<8x!tt.ptr<bf16>, #blocked>
     %21 = tt.splat %arg1 : !tt.ptr<bf16> -> tensor<8x!tt.ptr<bf16>, #blocked>
     %22 = tt.addptr %21, %16 : tensor<8x!tt.ptr<bf16>, #blocked>, tensor<8xi32, #blocked>
-    // COMMON: amdgpu.buffer_store %[[loaded]], %arg1[%{{.*}}]
+    // COMMON: amdgpu.buffer_store
     tt.store %22, %20 : tensor<8x!tt.ptr<bf16>, #blocked>
     tt.return
   }
@@ -506,12 +507,15 @@ module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 4 : i32} {
     %4 = arith.trunci %3 : tensor<8xi64, #blocked> to tensor<8xi32, #blocked>
     %5 = tt.splat %arg0 : !tt.ptr<bf16> -> tensor<8x!tt.ptr<bf16>, #blocked>
     %6 = tt.addptr %5, %4 : tensor<8x!tt.ptr<bf16>, #blocked>, tensor<8xi32, #blocked>
-    // COMMON: %[[loaded:.*]] = amdgpu.buffer_load %arg0[%{{.*}}]
+    // Note: It's not able to prove that the value range of elmtIdx in [0,1G].
+    // testing case traverse_if_2nd, traverse_if_2nd_v2 and traverse_if_2nd_v3
+    // works better than this case for this purpose.
+    // COMMON-NOT:amdgpu.buffer_load
     %7 = tt.load %6: tensor<8x!tt.ptr<bf16>, #blocked>
     %8 = tt.make_range {end = 8 : i32, start = 0 : i32} : tensor<8xi32, #blocked>
     %9 = tt.splat %arg1 : !tt.ptr<bf16> -> tensor<8x!tt.ptr<bf16>, #blocked>
     %10 = tt.addptr %9, %8 : tensor<8x!tt.ptr<bf16>, #blocked>, tensor<8xi32, #blocked>
-    // COMMON: amdgpu.buffer_store %[[loaded]], %arg1[%{{.*}}]
+    // COMMON: amdgpu.buffer_store
     tt.store %10, %7 : tensor<8x!tt.ptr<bf16>, #blocked>
     tt.return
   }
