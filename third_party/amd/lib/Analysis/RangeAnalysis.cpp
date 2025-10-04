@@ -363,11 +363,17 @@ static void collectValueOfSignedInt(Operation *top, DenseSet<Value> &valueSet) {
     }
   }
 
-  LLVM_DEBUG(
-      DBGS() << "Values considered as signed int begin\n"; for (auto v
-                                                                : valueSet) {
-        DBGS() << " - " << v << "\n";
-      } DBGS() << "Values considered as signed int end\n";);
+  LLVM_DEBUG({
+      DBGS() << "Values considered as signed int (begin)\n";
+      OpPrintingFlags flags;
+      flags.skipRegions(true);
+      for (auto v : valueSet) {
+        DBGS() << " - ";
+        v.print(llvm::dbgs(), flags);
+        llvm::dbgs() << "\n";
+      }
+      DBGS() << "Values considered as signed int (end)\n";
+  });
 }
 
 } // namespace
@@ -585,12 +591,15 @@ void TritonIntegerRangeAnalysis::defaultTransferFunc(
   //  would otherwise fall into infinite loop.
   ChangeResult changed = lattice->join(incomingRange_);
   LLVM_DEBUG({
-    if (changed == ChangeResult::Change) {
-      DBGS() << "Inferred range for ";
-      resultVal.printAsOperand(llvm::dbgs(), {});
-      llvm::dbgs() << " to " << incomingRange_ << "\n";
+    OpPrintingFlags flags;
+    flags.skipRegions(true);
+    DBGS() << ((changed == ChangeResult::Change) ?
+              ">Inferred range for: " : ">Remain unchanged: ");
+    resultVal.printAsOperand(llvm::dbgs(), flags);
+    llvm::dbgs() << ", resulting state:" << lattice->getValue()
+                 << ", in value-range: " << incomingRange_ << "\n";
     }
-  });
+  );
 
   // step 5: Add those ops that depends on this op to the worklist. The resolver
   // will iterate all items in the worklist until it become empty.
@@ -673,6 +682,7 @@ TritonIntegerRangeAnalysis::rectifyInfferableRange(
 
 void TritonIntegerRangeAnalysis::visitYieldHelper(Operation *op, Value value) {
   auto yieldOp = dyn_cast<scf::YieldOp>(op);
+  LDBG("visit yieldOp: " << yieldOp);
 
   dataflow::IntegerValueRangeLattice *srcLattice = getLatticeElement(value);
 
@@ -689,7 +699,18 @@ void TritonIntegerRangeAnalysis::visitYieldHelper(Operation *op, Value value) {
       dataflow::IntegerValueRangeLattice *resLattice = getLatticeElement(res);
       auto changed = resLattice->join(*srcLattice);
       propagateIfChanged(resLattice, changed);
-      continue;
+
+      LLVM_DEBUG({
+        OpPrintingFlags flags;
+        flags.skipRegions(true);
+        DBGS() << ((changed == ChangeResult::Change) ?
+                ">yieldOp bring change: " : ">yieldOp bring no change:");
+        res.printAsOperand(llvm::dbgs(), flags);
+        llvm::dbgs() << ", resulting value-range: "
+                     << resLattice->getValue().getValue()
+                     << ", in value-range: " <<
+                     srcLattice->getValue().getValue() << "\n";
+      });
     }
   }
 }
@@ -839,7 +860,7 @@ void TritonIntegerRangeAnalysis::visitRegionSuccessors(
     RegionBranchPoint successor,
     ArrayRef<dataflow::AbstractSparseLattice *> abstractLattices) {
   LLVM_DEBUG({
-    DBGS() << "Inferring ranges for ";
+    DBGS() << "Visit Region Succesors of ";
     OpPrintingFlags flags;
     flags.skipRegions(true);
     branch.print(llvm::dbgs(), flags);
