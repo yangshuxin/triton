@@ -564,7 +564,7 @@ module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 4 : i32} {
     %7 = tt.addptr %6, %4 : tensor<1024x!tt.ptr<f32>, #blocked>, tensor<1024xi32, #blocked>
     // Note: the large tensor is accessed, offset is in the range of [0, smax].
     // without tl.assume the range would be [-128, smax]
-    // COMMON-NOT: %[[loaded:.*]] = amdgpu.buffer_atomic_rmw fadd, acq_rel, gpu, %arg1, %[[scalar_ptr]][%[[offset]]]
+    // COMMON-NOT: amdgpu.buffer_atomic_rmw
     %8 = tt.atomic_rmw fadd, acq_rel, gpu, %7, %arg1 : (tensor<1024x!tt.ptr<f32>, #blocked>, tensor<1024xf32, #blocked>) -> tensor<1024xf32, #blocked>
     tt.return %8 : tensor<1024xf32, #blocked>
   }
