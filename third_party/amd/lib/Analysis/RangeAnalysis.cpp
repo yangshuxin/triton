@@ -85,7 +85,7 @@ void inferResultRanges(tt::MakeRangeOp *op, SetIntRangeFn setResultRange) {
                      /*min*/ {/*numBits*/ bitWidth, /*val*/ op->getStart(),
                               /*isSigned*/ elTy.isSigned()},
                      /*max*/
-                     {/*numBits*/ bitWidth, /*val*/ op->getEnd(),
+                     {/*numBits*/ bitWidth, /*val*/ op->getEnd() - 1,
                       /*isSigned*/ elTy.isSigned()},
                      /*isSigned*/ elTy.isSigned()));
 }
