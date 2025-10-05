@@ -34,11 +34,11 @@ namespace mlir::triton::AMD {
 struct TritonIntegerRangeAnalysis : dataflow::IntegerRangeAnalysis {
   using dataflow::IntegerRangeAnalysis::IntegerRangeAnalysis;
   using Base=dataflow::IntegerRangeAnalysis;
-  TritonIntegerRangeAnalysis(
-      DataFlowSolver &solver,
+  TritonIntegerRangeAnalysis(DataFlowSolver &solver,
       const DenseMap<Value, SetVector<Operation *>> &assumptions,
-      DominanceInfo *dominanceInfo);
-  ~TritonIntegerRangeAnalysis();
+      DominanceInfo *dominanceInfo)
+      : dataflow::IntegerRangeAnalysis(solver), assumptions(assumptions),
+        domInfo(dominanceInfo) {}
 
   void setToEntryState(dataflow::IntegerValueRangeLattice *lattice) override;
 
@@ -158,8 +158,7 @@ private:
       ArrayRef<const dataflow::IntegerValueRangeLattice *> srcLattices,
       const IntegerValueRange &range);
 
-  class TritonIntRangeAnalysisData;
-  std::unique_ptr<TritonIntRangeAnalysisData> opaqueData;
+  DenseSet<Value> signedIntValues;
   DominanceInfo *domInfo = nullptr;
 };
 

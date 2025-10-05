@@ -441,14 +441,6 @@ TritonIntegerRangeAnalysis::maybeGetTripCount(LoopLikeOpInterface loop) {
   return {};
 }
 
-// We need to create some data to track internal state. There is no need to
-// expose the details of these data in to header file. Hence we create opqaue
-// data in the cpp file.
-class TritonIntegerRangeAnalysis::TritonIntRangeAnalysisData {
-public:
-  DenseSet<Value> signedIntValues;
-};
-
 bool isEmptyInitializedRange(ConstantIntRanges rv) {
   if (!rv.umin().getBitWidth() || !rv.umax().getBitWidth() ||
       !rv.smin().getBitWidth() || !rv.smax().getBitWidth())
@@ -491,20 +483,9 @@ bool cmpIIsStaticallyTrue(const DataFlowSolver &solver, arith::CmpIOp cmpOp) {
   return false;
 }
 
-// Cannot put in the header because file unique ptr of opaque type.
-TritonIntegerRangeAnalysis::TritonIntegerRangeAnalysis(
-    DataFlowSolver &solver,
-    const DenseMap<Value, SetVector<Operation *>> &assumptions,
-    DominanceInfo *dominanceInfo)
-    : dataflow::IntegerRangeAnalysis(solver), assumptions(assumptions),
-      domInfo(dominanceInfo) {}
-
-TritonIntegerRangeAnalysis::~TritonIntegerRangeAnalysis() = default;
-
 LogicalResult TritonIntegerRangeAnalysis::initialize(Operation *top) {
-  opaqueData = std::make_unique<
-      TritonIntegerRangeAnalysis::TritonIntRangeAnalysisData>();
-  collectValueOfSignedInt(top, opaqueData->signedIntValues);
+  signedIntValues.clear();
+  collectValueOfSignedInt(top, signedIntValues);
   return Base::initialize(top);
 }
 
@@ -630,7 +611,7 @@ TritonIntegerRangeAnalysis::rectifyInfferableRange(
   };
 
   // Not appliable to those bin-ops yielding unsigned int.
-  if (!opaqueData->signedIntValues.count(op->getResult(0)))
+  if (!signedIntValues.count(op->getResult(0)))
     return std::nullopt;
 
   // step 2: Do nothing if the value-range is already a non-negative range.
