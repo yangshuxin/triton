@@ -4,8 +4,8 @@
 #include "mlir/Analysis/DataFlow/IntegerRangeAnalysis.h"
 #include "mlir/Analysis/DataFlow/SparseAnalysis.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Interfaces/LoopLikeInterface.h"
 #include "mlir/IR/Dominance.h"
+#include "mlir/Interfaces/LoopLikeInterface.h"
 
 namespace mlir::triton {
 class FuncOp;
@@ -33,8 +33,9 @@ namespace mlir::triton::AMD {
 /// See visitRegionSuccessors.
 struct TritonIntegerRangeAnalysis : dataflow::IntegerRangeAnalysis {
   using dataflow::IntegerRangeAnalysis::IntegerRangeAnalysis;
-  using Base=dataflow::IntegerRangeAnalysis;
-  TritonIntegerRangeAnalysis(DataFlowSolver &solver,
+  using Base = dataflow::IntegerRangeAnalysis;
+  TritonIntegerRangeAnalysis(
+      DataFlowSolver &solver,
       const DenseMap<Value, SetVector<Operation *>> &assumptions,
       DominanceInfo *dominanceInfo)
       : dataflow::IntegerRangeAnalysis(solver), assumptions(assumptions),
@@ -159,6 +160,7 @@ private:
       const IntegerValueRange &range);
 
   DenseSet<Value> signedIntValues;
+  llvm::SmallMapVector<Value, ConstantIntRanges, 2> opResultAssumption;
   DominanceInfo *domInfo = nullptr;
 };
 

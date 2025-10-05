@@ -364,15 +364,15 @@ static void collectValueOfSignedInt(Operation *top, DenseSet<Value> &valueSet) {
   }
 
   LLVM_DEBUG({
-      DBGS() << "Values considered as signed int (begin)\n";
-      OpPrintingFlags flags;
-      flags.skipRegions(true);
-      for (auto v : valueSet) {
-        DBGS() << " - ";
-        v.print(llvm::dbgs(), flags);
-        llvm::dbgs() << "\n";
-      }
-      DBGS() << "Values considered as signed int (end)\n";
+    DBGS() << "Values considered as signed int (begin)\n";
+    OpPrintingFlags flags;
+    flags.skipRegions(true);
+    for (auto v : valueSet) {
+      DBGS() << " - ";
+      v.print(llvm::dbgs(), flags);
+      llvm::dbgs() << "\n";
+    }
+    DBGS() << "Values considered as signed int (end)\n";
   });
 }
 
@@ -562,9 +562,13 @@ void TritonIntegerRangeAnalysis::defaultTransferFunc(
   // step 3: If there is assumed value range, the assumed one take precedence.
   // TODO: I think this is bit conservative, the better way is:
   //  final_range = (old_range ∪ incomingRange) ∩ assume_range
-  if (auto maybeRange = maybeGetAssumedRange(resultVal, op->getBlock())) {
-    incomingRange_ =
-        IntegerValueRange(incomingRange.getValue().intersection(*maybeRange));
+  if (auto iter = opResultAssumption.find(resultVal);
+      iter != opResultAssumption.end()) {
+    const auto &range = iter->second;
+    if (auto maybeRange = maybeGetAssumedRange(resultVal, op->getBlock())) {
+      incomingRange_ =
+          IntegerValueRange(incomingRange.getValue().intersection(range));
+    }
   }
 
   // step 4: Update the value range. Note that we are using `join` operation
@@ -574,19 +578,17 @@ void TritonIntegerRangeAnalysis::defaultTransferFunc(
   LLVM_DEBUG({
     OpPrintingFlags flags;
     flags.skipRegions(true);
-    DBGS() << ((changed == ChangeResult::Change) ?
-              ">Inferred range for: " : ">Remain unchanged: ");
+    DBGS() << ((changed == ChangeResult::Change) ? ">Inferred range for: "
+                                                 : ">Remain unchanged: ");
     resultVal.printAsOperand(llvm::dbgs(), flags);
     llvm::dbgs() << ", resulting state:" << lattice->getValue()
                  << ", in value-range: " << incomingRange_ << "\n";
-    }
-  );
+  });
 
   // step 5: Add those ops that depends on this op to the worklist. The resolver
   // will iterate all items in the worklist until it become empty.
   propagateIfChanged(lattice, changed);
 }
-
 
 std::optional<IntegerValueRange>
 TritonIntegerRangeAnalysis::rectifyInfferableRange(
@@ -684,13 +686,14 @@ void TritonIntegerRangeAnalysis::visitYieldHelper(Operation *op, Value value) {
       LLVM_DEBUG({
         OpPrintingFlags flags;
         flags.skipRegions(true);
-        DBGS() << ((changed == ChangeResult::Change) ?
-                ">yieldOp bring change: " : ">yieldOp bring no change:");
+        DBGS() << ((changed == ChangeResult::Change)
+                       ? ">yieldOp bring change: "
+                       : ">yieldOp bring no change:");
         res.printAsOperand(llvm::dbgs(), flags);
         llvm::dbgs() << ", resulting value-range: "
                      << resLattice->getValue().getValue()
-                     << ", in value-range: " <<
-                     srcLattice->getValue().getValue() << "\n";
+                     << ", in value-range: "
+                     << srcLattice->getValue().getValue() << "\n";
       });
     }
   }
@@ -701,8 +704,49 @@ LogicalResult TritonIntegerRangeAnalysis::visitOperation(
     ArrayRef<const dataflow::IntegerValueRangeLattice *> operands,
     ArrayRef<dataflow::IntegerValueRangeLattice *> resultsLattices) {
 
-  LogicalResult visitResult = visitOperationHelper(op, operands, resultsLattices);
+  // step 1: Figure out the implied value-range of result-value.
+  opResultAssumption.clear();
+  for (mlir::OpResult result : op->getResults()) {
+    auto assumedRange = maybeGetAssumedRange(result, op->getBlock());
+    if (assumedRange.has_value())
+      opResultAssumption.insert(std::pair(result, *assumedRange));
+  }
 
+  // step 2: call helper function inferring the value range. If assumed value-
+  // range is present, the transfer-function will intersect the assumed value-
+  // value with the inferred value range.
+  LogicalResult visitResult =
+      visitOperationHelper(op, operands, resultsLattices);
+
+  // step 3: If previous step failed to infer value-range, apply assumed
+  //  value-range is present.
+  for (auto [index, lattice] : llvm::enumerate(resultsLattices)) {
+    Value result = op->getResult(index);
+    const auto assumedIter = opResultAssumption.find(result);
+    if (assumedIter == opResultAssumption.end())
+      continue;
+
+    const mlir::IntegerValueRange &vr = lattice->getValue();
+    if (!vr.isUninitialized() && !AMD::isEmptyInitializedRange(vr.getValue()))
+      continue;
+
+    const ConstantIntRanges &assumedVr = assumedIter->second;
+    IntegerValueRange range(assumedVr);
+    auto changed = lattice->join(range);
+
+    LLVM_DEBUG({
+      if (changed == ChangeResult::Change) {
+        DBGS() << ">Force apply assumed value range. value:";
+        result.printAsOperand(llvm::dbgs(), {});
+        llvm::dbgs() << ", range:" << range << "\n";
+      }
+    });
+    propagateIfChanged(lattice, changed);
+  }
+
+  // step 4: The dataflow framework does not understand SCF. It skip yieldOp
+  // as it has no result. To workaround this problem, we visit all yieldOp
+  // which depends on this operation.
   for (int resIdx = 0, resEnd = op->getNumResults(); resIdx < resEnd;
        ++resIdx) {
     mlir::OpResult res = op->getResult(resIdx);
@@ -731,18 +775,6 @@ LogicalResult TritonIntegerRangeAnalysis::visitOperationHelper(
                        this](Value v, const IntegerValueRange &incomingRange) {
     this->defaultTransferFunc(op, v, operands, resultsLattices, incomingRange);
   };
-
-  // Initialize lattices with assumptions.
-  for (const auto &resultLattice : resultsLattices) {
-    if (!resultLattice->getValue().isUninitialized())
-      continue;
-    auto anchor = resultLattice->getAnchor();
-    if (auto assumptions = this->assumptions.lookup(anchor);
-        !assumptions.empty()) {
-      setToEntryState(resultLattice);
-      return success();
-    }
-  }
 
   // Ops with fixed/constant ranges.
   if (llvm::isa<GetProgramIdOp, MakeRangeOp, HistogramOp, GetNumProgramsOp>(
