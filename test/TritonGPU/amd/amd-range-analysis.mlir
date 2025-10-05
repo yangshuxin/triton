@@ -97,14 +97,14 @@ module attributes {"ttg.num-warps" = 4 : i32} {
     %1 = arith.muli %0, %c1024_i32 : i32
     %2 = tt.make_range {end = 1024 : i32, start = 0 : i32} : tensor<1024xi32>
     %3 = tt.addptr %arg0, %1 : !tt.ptr<f32>, i32
-    // expected-remark@+2 {{unsigned : [0, 1024] signed : [0, 1024]}}
+    // expected-remark@+2 {{unsigned : [0, 1023] signed : [0, 1023]}}
     // expected-remark@+1 {{non-neg}}
     %4 = arith.extsi %2 : tensor<1024xi32> to tensor<1024xi64>
     %5 = tt.addptr %3, %1 : !tt.ptr<f32>, i32
-    // expected-remark@+2 {{unsigned : [0, 1024] signed : [0, 1024]}}
+    // expected-remark@+2 {{unsigned : [0, 1023] signed : [0, 1023]}}
     // expected-remark@+1 {{non-neg}}
     %6 = arith.extsi %2 : tensor<1024xi32> to tensor<1024xi64>
-    // expected-remark@+2 {{unsigned : [0, 2048] signed : [0, 2048]}}
+    // expected-remark@+2 {{unsigned : [0, 2046] signed : [0, 2046]}}
     // expected-remark@+1 {{non-neg}}
     %7 = arith.addi %6, %4 : tensor<1024xi64>
     %8 = tt.splat %5 : !tt.ptr<f32> -> tensor<1024x!tt.ptr<f32>>
@@ -132,7 +132,7 @@ module attributes {"ttg.num-warps" = 4 : i32} {
     %2 = tt.make_range {end = 1024 : i32, start = 0 : i32} : tensor<1024xi32>
     %3 = tt.addptr %arg0, %1 : !tt.ptr<f32>, i32
     %4 = tt.addptr %3, %1 : !tt.ptr<f32>, i32
-    // expected-remark@+2 {{unsigned : [0, 2048] signed : [0, 2048]}}
+    // expected-remark@+2 {{unsigned : [0, 2046] signed : [0, 2046]}}
     // expected-remark@+1 {{non-neg}}
     %5 = arith.addi %2, %2 : tensor<1024xi32>
     %6 = tt.splat %4 : !tt.ptr<f32> -> tensor<1024x!tt.ptr<f32>>
@@ -162,18 +162,18 @@ module attributes {"ttg.num-warps" = 4 : i32} {
     %1 = arith.muli %0, %c1024_i32 : i32
     %2 = tt.make_range {end = 1024 : i32, start = 0 : i32} : tensor<1024xi32>
     %3 = tt.addptr %arg0, %1 : !tt.ptr<f32>, i32
-    // expected-remark@+2 {{unsigned : [0, 1024] signed : [0, 1024]}}
+    // expected-remark@+2 {{unsigned : [0, 1023] signed : [0, 1023]}}
     // expected-remark@+1 {{non-neg}}
     %4 = arith.extsi %2 : tensor<1024xi32> to tensor<1024xi64>
-    // expected-remark@+3 {{result 1: unsigned : [0, 131072] signed : [0, 131072]}}
+    // expected-remark@+3 {{result 1: unsigned : [0, 130944] signed : [0, 130944]}}
     // expected-remark@+2 {{result 1: non-neg}}
     // expected-remark@+1 {{inferred total trip count: 128}}
     %5:3 = scf.for %arg2 = %c0 to %c128 step %c1 iter_args(%arg3 = %3, %arg4 = %4, %arg5 = %arg1) -> (!tt.ptr<f32>, tensor<1024xi64>, tensor<1024xf32>) {
       %12 = tt.addptr %arg3, %1 : !tt.ptr<f32>, i32
-      // expected-remark@+2 {{unsigned : [0, 1024] signed : [0, 1024]}}
+      // expected-remark@+2 {{unsigned : [0, 1023] signed : [0, 1023]}}
       // expected-remark@+1 {{non-neg}}
       %13 = arith.extsi %2 : tensor<1024xi32> to tensor<1024xi64>
-      // expected-remark@+2 {{unsigned : [0, 132096] signed : [0, 132096]}}
+      // expected-remark@+2 {{unsigned : [0, 131967] signed : [0, 131967]}}
       // expected-remark@+1 {{non-neg}}
       %14 = arith.addi %13, %arg4 : tensor<1024xi64>
       %15 = tt.splat %12 : !tt.ptr<f32> -> tensor<1024x!tt.ptr<f32>>
@@ -183,10 +183,10 @@ module attributes {"ttg.num-warps" = 4 : i32} {
       scf.yield %12, %14, %18 : !tt.ptr<f32>, tensor<1024xi64>, tensor<1024xf32>
     }
     %6 = tt.addptr %5#0, %1 : !tt.ptr<f32>, i32
-    // expected-remark@+2 {{unsigned : [0, 1024] signed : [0, 1024]}}
+    // expected-remark@+2 {{unsigned : [0, 1023] signed : [0, 1023]}}
     // expected-remark@+1 {{non-neg}}
     %7 = arith.extsi %2 : tensor<1024xi32> to tensor<1024xi64>
-    // expected-remark@+2 {{unsigned : [0, 132096] signed : [0, 132096]}}
+    // expected-remark@+2 {{unsigned : [0, 131967] signed : [0, 131967]}}
     // expected-remark@+1 {{non-neg}}
     %8 = arith.addi %7, %5#1 : tensor<1024xi64>
     %9 = tt.splat %6 : !tt.ptr<f32> -> tensor<1024x!tt.ptr<f32>>
@@ -216,15 +216,15 @@ module attributes {"ttg.num-warps" = 4 : i32} {
     // expected-remark@+1 {{non-neg}}
     %1 = arith.muli %0, %c1024_i32 : i32
     %2 = tt.make_range {end = 1024 : i32, start = 0 : i32} : tensor<1024xi32>
-    // expected-remark@+3 {{result 1: unsigned : [0, 130048] signed : [0, 130048]}}
+    // expected-remark@+3 {{result 1: unsigned : [0, 129921] signed : [0, 129921]}}
     // expected-remark@+2 {{result 1: non-neg}}
     // expected-remark@+1 {{inferred total trip count: 128}}
     %3:3 = scf.for %arg2 = %c0 to %c128 step %c1 iter_args(%arg3 = %arg0, %arg4 = %cst, %arg5 = %arg1) -> (!tt.ptr<f32>, tensor<1024xi64>, tensor<1024xf32>) {
       %10 = tt.addptr %arg3, %1 : !tt.ptr<f32>, i32
-      // expected-remark@+2 {{unsigned : [0, 1024] signed : [0, 1024]}}
+      // expected-remark@+2 {{unsigned : [0, 1023] signed : [0, 1023]}}
       // expected-remark@+1 {{non-neg}}
       %11 = arith.extsi %2 : tensor<1024xi32> to tensor<1024xi64>
-      // expected-remark@+2 {{unsigned : [0, 131072] signed : [0, 131072]}}
+      // expected-remark@+2 {{unsigned : [0, 130944] signed : [0, 130944]}}
       // expected-remark@+1 {{non-neg}}
       %12 = arith.addi %11, %arg4 : tensor<1024xi64>
       %13 = tt.splat %10 : !tt.ptr<f32> -> tensor<1024x!tt.ptr<f32>>
@@ -234,7 +234,7 @@ module attributes {"ttg.num-warps" = 4 : i32} {
       scf.yield %10, %12, %16 : !tt.ptr<f32>, tensor<1024xi64>, tensor<1024xf32>
     }
     %4 = tt.addptr %3#0, %1 : !tt.ptr<f32>, i32
-    // expected-remark@+2 {{unsigned : [0, 1024] signed : [0, 1024]}}
+    // expected-remark@+2 {{unsigned : [0, 1023] signed : [0, 1023]}}
     // expected-remark@+1 {{non-neg}}
     %5 = arith.extsi %2 : tensor<1024xi32> to tensor<1024xi64>
     // expected-remark@+2 {{unsigned : [0, 131072] signed : [0, 131072]}}
@@ -276,7 +276,7 @@ module attributes {"ttg.num-warps" = 4 : i32} {
       // expected-remark@+1 {{inferred total trip count: 256}}
       %10:3 = scf.for %arg6 = %c0 to %c16 step %c1 iter_args(%arg7 = %arg3, %arg8 = %arg4, %arg9 = %arg5) -> (!tt.ptr<f32>, tensor<1024xi64>, tensor<1024xf32>) {
         %11 = tt.addptr %arg7, %1 : !tt.ptr<f32>, i32
-        // expected-remark@+2 {{unsigned : [0, 1024] signed : [0, 1024]}}
+        // expected-remark@+2 {{unsigned : [0, 1023] signed : [0, 1023]}}
         // expected-remark@+1 {{non-neg}}
         %12 = arith.extsi %2 : tensor<1024xi32> to tensor<1024xi64>
         // expected-remark@+2 {{unsigned : [0, 262144] signed : [0, 262144]}}
@@ -291,7 +291,7 @@ module attributes {"ttg.num-warps" = 4 : i32} {
       scf.yield %10#0, %10#1, %10#2 : !tt.ptr<f32>, tensor<1024xi64>, tensor<1024xf32>
     }
     %4 = tt.addptr %3#0, %1 : !tt.ptr<f32>, i32
-    // expected-remark@+2 {{unsigned : [0, 1024] signed : [0, 1024]}}
+    // expected-remark@+2 {{unsigned : [0, 1023] signed : [0, 1023]}}
     // expected-remark@+1 {{non-neg}}
     %5 = arith.extsi %2 : tensor<1024xi32> to tensor<1024xi64>
     // expected-remark@+2 {{unsigned : [0, 16384] signed : [0, 16384]}}
@@ -331,7 +331,7 @@ module attributes {"ttg.num-warps" = 4 : i32} {
       // expected-remark@+1 {{inferred total trip count: 16384}}
       %10:3 = scf.for %arg6 = %c0 to %c128 step %c1 iter_args(%arg7 = %arg3, %arg8 = %arg4, %arg9 = %arg5) -> (!tt.ptr<f32>, tensor<1024xi64>, tensor<1024xf32>) {
         %11 = tt.addptr %arg7, %1 : !tt.ptr<f32>, i32
-        // expected-remark@+2 {{unsigned : [0, 1024] signed : [0, 1024]}}
+        // expected-remark@+2 {{unsigned : [0, 1023] signed : [0, 1023]}}
         // expected-remark@+1 {{non-neg}}
         %12 = arith.extsi %2 : tensor<1024xi32> to tensor<1024xi64>
         // expected-remark@+1 {{unsigned : [0, 18446744073709551615] signed : [-9223372036854775808, 9223372036854775807]}}
@@ -345,7 +345,7 @@ module attributes {"ttg.num-warps" = 4 : i32} {
       scf.yield %10#0, %10#1, %10#2 : !tt.ptr<f32>, tensor<1024xi64>, tensor<1024xf32>
     }
     %4 = tt.addptr %3#0, %1 : !tt.ptr<f32>, i32
-    // expected-remark@+2 {{unsigned : [0, 1024] signed : [0, 1024]}}
+    // expected-remark@+2 {{unsigned : [0, 1023] signed : [0, 1023]}}
     // expected-remark@+1 {{non-neg}}
     %5 = arith.extsi %2 : tensor<1024xi32> to tensor<1024xi64>
     // expected-remark@+1 {{unsigned : [0, 18446744073709551615] signed : [-9223372036854775808, 9223372036854775807]}}
@@ -375,11 +375,11 @@ module attributes {"ttg.num-warps" = 4 : i32} {
     // expected-remark@+1 {{non-neg}}
     %1 = arith.muli %0, %c1024_i32 : i32
     %2 = tt.make_range {end = 1024 : i32, start = 0 : i32} : tensor<1024xi32>
-    // expected-remark@+2 {{result 1: unsigned : [0, 1024] signed : [0, 1024]}}
+    // expected-remark@+2 {{result 1: unsigned : [0, 1023] signed : [0, 1023]}}
     // expected-remark@+1 {{result 1: non-neg}}
     %3:2 = scf.if %arg2 -> (!tt.ptr<f32>, tensor<1024xi64>) {
       %8 = tt.addptr %arg0, %1 : !tt.ptr<f32>, i32
-      // expected-remark@+2 {{unsigned : [0, 1024] signed : [0, 1024]}}
+      // expected-remark@+2 {{unsigned : [0, 1023] signed : [0, 1023]}}
       // expected-remark@+1 {{non-neg}}
       %9 = arith.extsi %2 : tensor<1024xi32> to tensor<1024xi64>
       scf.yield %8, %9 : !tt.ptr<f32>, tensor<1024xi64>
@@ -387,7 +387,7 @@ module attributes {"ttg.num-warps" = 4 : i32} {
       %8 = tt.addptr %arg0, %1 : !tt.ptr<f32>, i32
       scf.yield %8, %cst : !tt.ptr<f32>, tensor<1024xi64>
     }
-    // expected-remark@+2 {{unsigned : [0, 1024] signed : [0, 1024]}}
+    // expected-remark@+2 {{unsigned : [0, 1023] signed : [0, 1023]}}
     // expected-remark@+1 {{non-neg}}
     %4 = arith.trunci %3#1 : tensor<1024xi64> to tensor<1024xi32>
     %5 = tt.splat %3#0 : !tt.ptr<f32> -> tensor<1024x!tt.ptr<f32>>
@@ -416,7 +416,7 @@ module attributes {"ttg.num-warps" = 4 : i32} {
     %1 = arith.muli %0, %c1024_i32 : i32
     %2 = tt.make_range {end = 1024 : i32, start = 0 : i32} : tensor<1024xi32>
     %3 = tt.addptr %arg0, %1 : !tt.ptr<f32>, i32
-    // expected-remark@+2 {{unsigned : [0, 1024] signed : [0, 1024]}}
+    // expected-remark@+2 {{unsigned : [0, 1023] signed : [0, 1023]}}
     // expected-remark@+1 {{non-neg}}
     %4 = arith.extsi %2 : tensor<1024xi32> to tensor<1024xi64>
     cf.cond_br %arg1, ^bb1(%arg0, %cst : !tt.ptr<f32>, tensor<1024xi64>), ^bb2(%3, %4 : !tt.ptr<f32>, tensor<1024xi64>)
@@ -429,7 +429,7 @@ module attributes {"ttg.num-warps" = 4 : i32} {
     %10 = tt.load %9 : tensor<1024x!tt.ptr<f32>>
     tt.return %10 : tensor<1024xf32>
   ^bb2(%11: !tt.ptr<f32>, %12: tensor<1024xi64>):  // pred: ^bb0
-    // expected-remark@+2 {{unsigned : [0, 1024] signed : [0, 1024]}}
+    // expected-remark@+2 {{unsigned : [0, 1023] signed : [0, 1023]}}
     // expected-remark@+1 {{non-neg}}
     %13 = arith.trunci %12 : tensor<1024xi64> to tensor<1024xi32>
     %14 = tt.splat %11 : !tt.ptr<f32> -> tensor<1024x!tt.ptr<f32>>
@@ -567,14 +567,14 @@ module attributes {"ttg.num-warps" = 4 : i32} {
     %1 = arith.muli %0, %c1024_i32 : i32
     %2 = tt.make_range {end = 1024 : i32, start = 0 : i32} : tensor<1024xi32>
     %3 = tt.addptr %arg0, %1 : !tt.ptr<f32>, i32
-    // expected-remark@+2 {{unsigned : [0, 1024] signed : [0, 1024]}}
+    // expected-remark@+2 {{unsigned : [0, 1023] signed : [0, 1023]}}
     // expected-remark@+1 {{non-neg}}
     %4 = arith.extsi %2 : tensor<1024xi32> to tensor<1024xi64>
     %5 = arith.select %arg1, %arg0, %3 : !tt.ptr<f32>
-    // expected-remark@+2 {{unsigned : [0, 1024] signed : [0, 1024]}}
+    // expected-remark@+2 {{unsigned : [0, 1023] signed : [0, 1023]}}
     // expected-remark@+1 {{non-neg}}
     %6 = arith.select %arg1, %cst, %4 : tensor<1024xi64>
-    // expected-remark@+2 {{unsigned : [0, 1024] signed : [0, 1024]}}
+    // expected-remark@+2 {{unsigned : [0, 1023] signed : [0, 1023]}}
     // expected-remark@+1 {{non-neg}}
     %7 = arith.trunci %6 : tensor<1024xi64> to tensor<1024xi32>
     %8 = tt.splat %5 : !tt.ptr<f32> -> tensor<1024x!tt.ptr<f32>>
@@ -630,7 +630,7 @@ module attributes {"ttg.num-warps" = 4 : i32} {
     llvm.intr.assume %cmpule_pid : i1
     %1 = tt.make_range {end = 1024 : i32, start = 0 : i32} : tensor<1024xi32>
     %2 = tt.addptr %arg0, %0 : !tt.ptr<f32>, i32
-    // expected-remark@+2 {{unsigned : [0, 1024] signed : [0, 1024]}}
+    // expected-remark@+2 {{unsigned : [0, 1023] signed : [0, 1023]}}
     // expected-remark@+1 {{non-neg}}
     %3 = arith.extsi %1 : tensor<1024xi32> to tensor<1024xi64>
     // expected-remark@+3 {{result 1: unsigned : [0, 131072] signed : [0, 131072]}}
@@ -644,7 +644,7 @@ module attributes {"ttg.num-warps" = 4 : i32} {
       %13 = tt.addptr %12, %11 : tensor<1024x!tt.ptr<f32>>, tensor<1024xi32>
       %14 = tt.load %13 : tensor<1024x!tt.ptr<f32>>
       %15 = tt.addptr %arg3, %0 : !tt.ptr<f32>, i32
-      // expected-remark@+2 {{unsigned : [0, 1024] signed : [0, 1024]}}
+      // expected-remark@+2 {{unsigned : [0, 1023] signed : [0, 1023]}}
       // expected-remark@+1 {{non-neg}}
       %16 = arith.extsi %1 : tensor<1024xi32> to tensor<1024xi64>
       // expected-remark@+2 {{unsigned : [0, 132096] signed : [0, 132096]}}
@@ -655,7 +655,7 @@ module attributes {"ttg.num-warps" = 4 : i32} {
       scf.yield %18, %17, %19 : !tt.ptr<f32>, tensor<1024xi64>, tensor<1024xf32>
     } {tt.divisibility_arg1 = dense<16> : tensor<1xi32>, tt.divisibility_arg2 = dense<16> : tensor<1xi32>}
     %5 = tt.addptr %4#0, %0 : !tt.ptr<f32>, i32
-    // expected-remark@+2 {{unsigned : [0, 1024] signed : [0, 1024]}}
+    // expected-remark@+2 {{unsigned : [0, 1023] signed : [0, 1023]}}
     // expected-remark@+1 {{non-neg}}
     %6 = arith.extsi %1 : tensor<1024xi32> to tensor<1024xi64>
     // expected-remark@+2 {{unsigned : [0, 132096] signed : [0, 132096]}}
@@ -744,11 +744,11 @@ module attributes {"ttg.num-warps" = 4 : i32} {
     %1 = arith.muli %0, %c1024_i32 : i32
     %2 = tt.make_range {end = 1024 : i32, start = 0 : i32} : tensor<1024xi32>
     %3 = tt.addptr %arg0, %1 : !tt.ptr<f32>, i32
-    // expected-remark@+2 {{unsigned : [0, 1024] signed : [0, 1024]}}
+    // expected-remark@+2 {{unsigned : [0, 1023] signed : [0, 1023]}}
     // expected-remark@+1 {{non-neg}}
     %4 = arith.extsi %2 : tensor<1024xi32> to tensor<1024xi64>
     %5 = tt.addptr %arg0, %1 : !tt.ptr<f32>, i32
-    // expected-remark@+2 {{unsigned : [0, 1024] signed : [0, 1024]}}
+    // expected-remark@+2 {{unsigned : [0, 1023] signed : [0, 1023]}}
     // expected-remark@+1 {{non-neg}}
     %6 = arith.extsi %2 : tensor<1024xi32> to tensor<1024xi64>
     // expected-remark@+5 {{result 1: unsigned : [0, 131072] signed : [0, 131072]}}
@@ -771,7 +771,7 @@ module attributes {"ttg.num-warps" = 4 : i32} {
       scf.yield %14, %16, %arg3, %arg4, %20 : !tt.ptr<f32>, tensor<1024xi64>, !tt.ptr<f32>, tensor<1024xi64>, tensor<1024xf32>
     }
     %8 = tt.addptr %7#0, %1 : !tt.ptr<f32>, i32
-    // expected-remark@+2 {{unsigned : [0, 1024] signed : [0, 1024]}}
+    // expected-remark@+2 {{unsigned : [0, 1023] signed : [0, 1023]}}
     // expected-remark@+1 {{non-neg}}
     %9 = arith.extsi %2 : tensor<1024xi32> to tensor<1024xi64>
     // expected-remark@+2 {{unsigned : [0, 132096] signed : [0, 132096]}}
@@ -804,11 +804,11 @@ module attributes {"ttg.num-warps" = 4 : i32} {
     %1 = arith.muli %0, %c1024_i32 : i32
     %2 = tt.make_range {end = 1024 : i32, start = 0 : i32} : tensor<1024xi32>
     %3 = tt.addptr %arg0, %1 : !tt.ptr<f32>, i32
-    // expected-remark@+2 {{unsigned : [0, 1024] signed : [0, 1024]}}
+    // expected-remark@+2 {{unsigned : [0, 1023] signed : [0, 1023]}}
     // expected-remark@+1 {{non-neg}}
     %4 = arith.extsi %2 : tensor<1024xi32> to tensor<1024xi64>
     %5 = tt.addptr %arg1, %1 : !tt.ptr<f32>, i32
-    // expected-remark@+2 {{unsigned : [0, 1024] signed : [0, 1024]}}
+    // expected-remark@+2 {{unsigned : [0, 1023] signed : [0, 1023]}}
     // expected-remark@+1 {{non-neg}}
     %6 = arith.extsi %2 : tensor<1024xi32> to tensor<1024xi64>
     // expected-remark@+5 {{result 1: unsigned : [0, 131072] signed : [0, 131072]}}
@@ -818,7 +818,7 @@ module attributes {"ttg.num-warps" = 4 : i32} {
     // expected-remark@+1 {{inferred total trip count: 128}}
     %7:6 = scf.for %arg3 = %c0 to %c128 step %c1 iter_args(%arg4 = %3, %arg5 = %4, %arg6 = %arg2, %arg7 = %5, %arg8 = %6, %arg9 = %arg2) -> (!tt.ptr<f32>, tensor<1024xi64>, tensor<1024xf32>, !tt.ptr<f32>, tensor<1024xi64>, tensor<1024xf32>) {
       %20 = tt.addptr %arg4, %1 : !tt.ptr<f32>, i32
-      // expected-remark@+2 {{unsigned : [0, 1024] signed : [0, 1024]}}
+      // expected-remark@+2 {{unsigned : [0, 1023] signed : [0, 1023]}}
       // expected-remark@+1 {{non-neg}}
       %21 = arith.extsi %2 : tensor<1024xi32> to tensor<1024xi64>
       // expected-remark@+2 {{unsigned : [0, 132096] signed : [0, 132096]}}
@@ -829,7 +829,7 @@ module attributes {"ttg.num-warps" = 4 : i32} {
       %25 = tt.load %24 : tensor<1024x!tt.ptr<f32>>
       %26 = arith.addf %25, %arg6 : tensor<1024xf32>
       %27 = tt.addptr %arg7, %1 : !tt.ptr<f32>, i32
-      // expected-remark@+2 {{unsigned : [0, 1024] signed : [0, 1024]}}
+      // expected-remark@+2 {{unsigned : [0, 1023] signed : [0, 1023]}}
       // expected-remark@+1 {{non-neg}}
       %28 = arith.extsi %2 : tensor<1024xi32> to tensor<1024xi64>
       // expected-remark@+2 {{unsigned : [0, 132096] signed : [0, 132096]}}
@@ -842,7 +842,7 @@ module attributes {"ttg.num-warps" = 4 : i32} {
       scf.yield %27, %29, %33, %20, %22, %26 : !tt.ptr<f32>, tensor<1024xi64>, tensor<1024xf32>, !tt.ptr<f32>, tensor<1024xi64>, tensor<1024xf32>
     }
     %8 = tt.addptr %7#0, %1 : !tt.ptr<f32>, i32
-    // expected-remark@+2 {{unsigned : [0, 1024] signed : [0, 1024]}}
+    // expected-remark@+2 {{unsigned : [0, 1023] signed : [0, 1023]}}
     // expected-remark@+1 {{non-neg}}
     %9 = arith.extsi %2 : tensor<1024xi32> to tensor<1024xi64>
     // expected-remark@+2 {{unsigned : [0, 132096] signed : [0, 132096]}}
@@ -852,7 +852,7 @@ module attributes {"ttg.num-warps" = 4 : i32} {
     %12 = tt.addptr %11, %10 : tensor<1024x!tt.ptr<f32>>, tensor<1024xi64>
     %13 = tt.load %12 : tensor<1024x!tt.ptr<f32>>
     %14 = tt.addptr %7#3, %1 : !tt.ptr<f32>, i32
-    // expected-remark@+2 {{unsigned : [0, 1024] signed : [0, 1024]}}
+    // expected-remark@+2 {{unsigned : [0, 1023] signed : [0, 1023]}}
     // expected-remark@+1 {{non-neg}}
     %15 = arith.extsi %2 : tensor<1024xi32> to tensor<1024xi64>
     // expected-remark@+2 {{unsigned : [0, 132096] signed : [0, 132096]}}
@@ -886,14 +886,14 @@ module attributes {"ttg.num-warps" = 4 : i32} {
     %1 = arith.muli %0, %c1024_i32 : i32
     %2 = tt.make_range {end = 1024 : i32, start = 0 : i32} : tensor<1024xi32>
     %3 = tt.addptr %arg0, %1 : !tt.ptr<f32>, i32
-    // expected-remark@+2 {{unsigned : [0, 1024] signed : [0, 1024]}}
+    // expected-remark@+2 {{unsigned : [0, 1023] signed : [0, 1023]}}
     // expected-remark@+1 {{non-neg}}
     %4 = arith.extsi %2 : tensor<1024xi32> to tensor<1024xi64>
     // expected-remark@+2 {{result 1: unsigned : [0, 18446744073709551615] signed : [-9223372036854775808, 9223372036854775807]}}
     // expected-remark@+1 {{inferred total trip count: 1025}}
     %5:3 = scf.for %arg2 = %c0 to %c128 step %K iter_args(%arg3 = %3, %arg4 = %4, %arg5 = %arg1) -> (!tt.ptr<f32>, tensor<1024xi64>, tensor<1024xf32>) {
       %12 = tt.addptr %arg3, %1 : !tt.ptr<f32>, i32
-      // expected-remark@+2 {{unsigned : [0, 1024] signed : [0, 1024]}}
+      // expected-remark@+2 {{unsigned : [0, 1023] signed : [0, 1023]}}
       // expected-remark@+1 {{non-neg}}
       %13 = arith.extsi %2 : tensor<1024xi32> to tensor<1024xi64>
       // expected-remark@+1 {{unsigned : [0, 18446744073709551615] signed : [-9223372036854775808, 9223372036854775807]}}
@@ -905,7 +905,7 @@ module attributes {"ttg.num-warps" = 4 : i32} {
       scf.yield %12, %14, %18 : !tt.ptr<f32>, tensor<1024xi64>, tensor<1024xf32>
     }
     %6 = tt.addptr %5#0, %1 : !tt.ptr<f32>, i32
-    // expected-remark@+2 {{unsigned : [0, 1024] signed : [0, 1024]}}
+    // expected-remark@+2 {{unsigned : [0, 1023] signed : [0, 1023]}}
     // expected-remark@+1 {{non-neg}}
     %7 = arith.extsi %2 : tensor<1024xi32> to tensor<1024xi64>
     // expected-remark@+1 {{unsigned : [0, 18446744073709551615] signed : [-9223372036854775808, 9223372036854775807]}}
